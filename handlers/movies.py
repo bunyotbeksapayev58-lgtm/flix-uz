@@ -587,10 +587,17 @@ async def cb_check_sub_status(call: CallbackQuery):
             reply_markup=get_main_keyboard(is_admin)
         )
     else:
-        await call.answer(
-            f"❌ Siz hali {len(unjoined)} ta kanalga a'zo bo‘lmadingiz!\nIltimos, yuqoridagi kanallarga a'zo bo‘ling.",
-            show_alert=True
-        )
+        tg_unjoined = [ch for ch in unjoined if ch.get("channel_type", "telegram").lower() == "telegram"]
+        if tg_unjoined:
+            unjoined_names = "\n• ".join([f"📢 {ch.get('channel_name', ch['channel_id'])}" for ch in tg_unjoined])
+            alert_msg = (
+                f"❌ Siz hali quyidagi Telegram kanalimizga a'zo bo‘lmadingiz:\n• {unjoined_names}\n\n"
+                "Iltimos, avval kanalga a'zo bo‘ling va Instagram/YouTube sahifalarimizga ham obuna bo'ling."
+            )
+        else:
+            alert_msg = "❌ Iltimos, yuqoridagi homiy sahifalarga obuna bo‘ling va qayta tekshiring."
+
+        await call.answer(alert_msg, show_alert=True)
 
 # ==================== QIDIRUV VA KOD BILAN TOPISH ====================
 

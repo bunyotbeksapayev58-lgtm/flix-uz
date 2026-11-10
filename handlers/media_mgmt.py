@@ -26,6 +26,12 @@ from utils.states import (
     ChannelPostState,
 )
 
+from utils.channel_check import (
+    normalize_telegram_channel_id,
+    normalize_instagram_link,
+    normalize_youtube_link,
+)
+
 router = Router()
 
 _batch_locks: Dict[int, asyncio.Lock] = {}
@@ -805,32 +811,43 @@ async def process_ep_access_threshold(message: Message, state: FSMContext):
 @router.message(Command("channels"))
 @router.callback_query(F.data == "admin:channels")
 async def show_required_channels(event: Message | CallbackQuery):
-    """Majburiy a'zolik kanallari ro'yxati"""
+    """Majburiy a'zolik kanallari va homiylar ro'yxati (Telegram, Instagram, YouTube)"""
     user_id = event.from_user.id
     if not await admin_check(user_id):
         return
 
     channels = await db.get_required_channels()
-    text = "📢 <b>Majburiy Obuna Kanallari Boshqaruvi:</b>\n\n"
+    text = "📢 <b>Majburiy Obuna va Homiylar Boshqaruvi:</b>\n\n"
     buttons = []
 
     if not channels:
         text += "<i>Hozircha majburiy a'zolik kanallari belgilanmagan. Foydalanuvchilar to‘g‘ridan-to‘g‘ri bepul tomosha qila olishadi.</i>\n"
     else:
-        text += "Foydalanuvchilar bepul kontentdan foydalanish uchun quyidagi kanallarga a'zo bo‘lishi shart:\n\n"
+        text += "Foydalanuvchilar bepul kontentdan foydalanish uchun quyidagi homiylarga a'zo bo‘lishi shart:\n\n"
         for idx, ch in enumerate(channels, 1):
+            ch_type = ch.get("channel_type", "telegram").lower()
             name = ch.get("channel_name") or ch["channel_id"]
-            text += f"{idx}. <b>{name}</b> (<code>{ch['channel_id']}</code>)\n"
-            buttons.append([InlineKeyboardButton(text=f"❌ {name} ni o‘chirish", callback_data=f"del_ch:{ch['id']}")])
+            if ch_type == "instagram":
+                type_icon = "📸 [Instagram]"
+            elif ch_type == "youtube":
+                type_icon = "🔴 [YouTube]"
+            else:
+                type_icon = "📢 [Telegram]"
 
-    buttons.append([InlineKeyboardButton(text="➕ Yangi kanal qo‘shish", callback_data="add_channel")])
-    buttons.append([InlineKeyboardButton(text="🔙 Orqaga", callback_data="cancel_action")])
+            text += f"{idx}. {type_icon} <b>{html.escape(name)}</b> (<code>{html.escape(ch['channel_id'])}</code>)\n"
+            buttons.append([InlineKeyboardButton(text=f"❌ {name[:25]} ni o‘chirish", callback_data=f"del_ch:{ch['id']}")])
+
+    buttons.append([InlineKeyboardButton(text="➕ Yangi homiy qo‘shish", callback_data="add_channel")])
+    buttons.append([InlineKeyboardButton(text="🔙 Admin panelga qaytish", callback_data="cancel_action")])
     markup = InlineKeyboardMarkup(inline_keyboard=buttons)
 
     if isinstance(event, Message):
         await event.answer(text, parse_mode="HTML", reply_markup=markup)
     else:
-        await event.message.answer(text, parse_mode="HTML", reply_markup=markup)
+        try:
+            await event.message.edit_text(text, parse_mode="HTML", reply_markup=markup)
+        except Exception:
+            await event.message.answer(text, parse_mode="HTML", reply_markup=markup)
         await event.answer()
 
 @router.callback_query(F.data == "add_channel")
@@ -840,51 +857,214 @@ async def start_add_channel(event: Message | CallbackQuery, state: FSMContext):
     if not await admin_check(user_id):
         return
 
-    await state.set_state(ChannelMgmtState.channel_id)
     text = (
-        "➕ <b>Majburiy obuna uchun kanal qo‘shish:</b>\n\n"
-        "1. Botni ushbu kanalga <b>Administrator</b> qilib qo‘shganingizga ishonch hosil qiling!\n"
-        "2. Kanalning <b>@username</b> nomini yoki <b>ID raqamini</b> yuboring (Masalan: <code>@kino_olami</code>):"
+        "➕ <b>Qaysi turdagi homiy sahifani qo‘shmoqchisiz?</b>\n\n"
+        "Quyidagi turlardan birini tanlang:"
     )
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📢 Telegram Kanal / Guruh", callback_data="add_ch_type:telegram"),
+        ],
+        [
+            InlineKeyboardButton(text="📸 Instagram Sahifa", callback_data="add_ch_type:instagram"),
+            InlineKeyboardButton(text="🔴 YouTube Kanal", callback_data="add_ch_type:youtube"),
+        ],
+        [
+            InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_action")
+        ]
+    ])
     if isinstance(event, Message):
-        await event.answer(text, parse_mode="HTML", reply_markup=get_cancel_keyboard())
+        await event.answer(text, parse_mode="HTML", reply_markup=markup)
     else:
-        await event.message.answer(text, parse_mode="HTML", reply_markup=get_cancel_keyboard())
+        await event.message.answer(text, parse_mode="HTML", reply_markup=markup)
         await event.answer()
+
+@router.callback_query(F.data.startswith("add_ch_type:"))
+async def cb_choose_ch_type(call: CallbackQuery, state: FSMContext):
+    if not await admin_check(call.from_user.id):
+        return
+
+    ch_type = call.data.split(":")[1]
+    await state.set_state(ChannelMgmtState.channel_id)
+    await state.update_data(channel_type=ch_type)
+
+    if ch_type == "instagram":
+        text = (
+            "📸 <b>Instagram sahifa qo‘shish:</b>\n\n"
+            "Instagram profilingiz havolasini yoki <b>@username</b> nomini yuboring:\n"
+            "<i>(Masalan: <code>https://instagram.com/kino_olami</code> yoki <code>@kino_olami</code>)</i>"
+        )
+    elif ch_type == "youtube":
+        text = (
+            "🔴 <b>YouTube kanal qo‘shish:</b>\n\n"
+            "YouTube kanal havolasini yoki nomini yuboring:\n"
+            "<i>(Masalan: <code>https://youtube.com/@kino_olami</code> yoki <code>@kino_olami</code>)</i>"
+        )
+    else:
+        text = (
+            "📢 <b>Telegram kanal qo‘shish:</b>\n\n"
+            "1️⃣ Botni ushbu kanalga <b>Administrator</b> qilib qo‘shganingizga ishonch hosil qiling!\n"
+            "2️⃣ Kanalning <b>@username</b> nomini, havolasini (<code>https://t.me/...</code>) yoki <b>ID raqamini</b> yuboring:\n"
+            "<i>(Masalan: <code>@kino_olami</code> yoki <code>-1001234567890</code>)</i>"
+        )
+
+    await call.message.answer(text, parse_mode="HTML", reply_markup=get_cancel_keyboard())
+    await call.answer()
 
 @router.message(ChannelMgmtState.channel_id)
 async def process_channel_id(message: Message, state: FSMContext):
-    ch_id = message.text.strip()
-    await state.update_data(channel_id=ch_id)
-    await state.set_state(ChannelMgmtState.channel_name)
-    await message.answer("📝 Kanal nomini kiriting (Masalan: <code>Kino Olami Rasmiy</code>):", parse_mode="HTML")
+    text = (message.text or "").strip()
+    data = await state.get_data()
+    ch_type = data.get("channel_type", "telegram")
+
+    if ch_type == "instagram":
+        un, url = normalize_instagram_link(text)
+        await state.update_data(channel_id=un, invite_link=url)
+        await state.set_state(ChannelMgmtState.channel_name)
+        await message.answer(
+            f"✅ Sahifa manzili belgilandi: <code>{html.escape(url)}</code>\n\n"
+            f"📝 Endi tugmada ko‘rinadigan nomini kiriting (Masalan: <code>Kino Olami Instagram</code> yoki «-»):",
+            parse_mode="HTML"
+        )
+    elif ch_type == "youtube":
+        un, url = normalize_youtube_link(text)
+        await state.update_data(channel_id=un, invite_link=url)
+        await state.set_state(ChannelMgmtState.channel_name)
+        await message.answer(
+            f"✅ Kanal manzili belgilandi: <code>{html.escape(url)}</code>\n\n"
+            f"📝 Endi tugmada ko‘rinadigan nomini kiriting (Masalan: <code>Kino Premyeralar YouTube</code> yoki «-»):",
+            parse_mode="HTML"
+        )
+    else:
+        norm_id = normalize_telegram_channel_id(text)
+        if not norm_id:
+            await message.answer("❌ Noto‘g‘ri format! Qaytadan yuboring:")
+            return
+
+        # Avtomatik kanal ma'lumotlarini tekshirish
+        detected_title = ""
+        is_admin_in_channel = True
+        try:
+            chat_target = int(norm_id) if (norm_id.startswith("-") and norm_id[1:].isdigit()) else norm_id
+            chat_obj = await message.bot.get_chat(chat_target)
+            detected_title = chat_obj.title or ""
+            # Bot adminligini tekshirish
+            bot_user = await message.bot.get_me()
+            bm = await message.bot.get_chat_member(chat_target, bot_user.id)
+            if bm.status not in ["administrator", "creator"]:
+                is_admin_in_channel = False
+        except Exception:
+            pass
+
+        await state.update_data(channel_id=norm_id, detected_title=detected_title)
+        await state.set_state(ChannelMgmtState.channel_name)
+
+        warn_text = ""
+        if not is_admin_in_channel:
+            warn_text = (
+                "\n\n⚠️ <b>Diqqat:</b> Bot ushbu kanalda administrator emas!\n"
+                "Foydalanuvchilar a'zoligini avtomatik tasdiqlash uchun botni kanalingizga <b>Administrator</b> qilib tayinlang."
+            )
+
+        title_hint = f" (Tavsiya: <code>{html.escape(detected_title)}</code>)" if detected_title else ""
+        await message.answer(
+            f"✅ Kanal ID belgilandi: <code>{html.escape(norm_id)}</code>{title_hint}{warn_text}\n\n"
+            f"📝 Kanal nomini kiriting (Masalan: <code>Kino Olami</code> yoki «-» deb yuboring):",
+            parse_mode="HTML"
+        )
 
 @router.message(ChannelMgmtState.channel_name)
 async def process_channel_name(message: Message, state: FSMContext):
-    name = message.text.strip()
+    name_input = (message.text or "").strip()
+    data = await state.get_data()
+    ch_type = data.get("channel_type", "telegram")
+
+    if ch_type == "instagram":
+        name = "Instagram Sahifa" if name_input in ["-", ""] else name_input
+        await state.clear()
+        ok = await db.add_required_channel(
+            channel_id=data["channel_id"],
+            channel_name=name,
+            invite_link=data["invite_link"],
+            channel_type="instagram"
+        )
+        if ok:
+            await message.answer(
+                f"🎉 <b>Instagram sahifasi muvaffaqiyatli qo‘shildi!</b>\n\n"
+                f"📸 <b>Nomi:</b> {html.escape(name)}\n"
+                f"🔗 <b>Havola:</b> {data['invite_link']}\n\n"
+                f"Endi bepul foydalanuvchilar ushbu sahifaga a'zo bo'lish tugmasini ko'rishadi.",
+                parse_mode="HTML",
+                reply_markup=get_main_keyboard(True)
+            )
+        else:
+            await message.answer("❌ Saqlashda xatolik yuz berdi.", reply_markup=get_main_keyboard(True))
+        return
+
+    elif ch_type == "youtube":
+        name = "YouTube Kanal" if name_input in ["-", ""] else name_input
+        await state.clear()
+        ok = await db.add_required_channel(
+            channel_id=data["channel_id"],
+            channel_name=name,
+            invite_link=data["invite_link"],
+            channel_type="youtube"
+        )
+        if ok:
+            await message.answer(
+                f"🎉 <b>YouTube kanali muvaffaqiyatli qo‘shildi!</b>\n\n"
+                f"🔴 <b>Nomi:</b> {html.escape(name)}\n"
+                f"🔗 <b>Havola:</b> {data['invite_link']}\n\n"
+                f"Endi bepul foydalanuvchilar ushbu kanalga a'zo bo'lish tugmasini ko'rishadi.",
+                parse_mode="HTML",
+                reply_markup=get_main_keyboard(True)
+            )
+        else:
+            await message.answer("❌ Saqlashda xatolik yuz berdi.", reply_markup=get_main_keyboard(True))
+        return
+
+    # Telegram uchun
+    detected = data.get("detected_title") or data.get("channel_id")
+    name = detected if name_input in ["-", ""] else name_input
     await state.update_data(channel_name=name)
     await state.set_state(ChannelMgmtState.invite_link)
+
+    ch_id = data.get("channel_id", "")
+    hint = f"https://t.me/{ch_id.lstrip('@')}" if ch_id.startswith("@") else "Kanal havolasi"
     await message.answer(
-        "🔗 Kanalga taklif havolasini yuboring (Masalan: <code>https://t.me/kino_olami</code> yoki «-» deb yuboring):",
+        f"🔗 Kanalga taklif havolasini yuboring (Masalan: <code>{hint}</code> yoki standart havola uchun «-» deb yuboring):",
         parse_mode="HTML"
     )
 
 @router.message(ChannelMgmtState.invite_link)
 async def process_channel_link(message: Message, state: FSMContext):
-    link = "" if message.text.strip() == "-" else message.text.strip()
+    raw_link = (message.text or "").strip()
     data = await state.get_data()
     await state.clear()
 
+    ch_id = data["channel_id"]
+    if raw_link == "-" or not raw_link:
+        if ch_id.startswith("@"):
+            link = f"https://t.me/{ch_id.lstrip('@')}"
+        elif ch_id.startswith("-100"):
+            link = f"https://t.me/c/{ch_id[4:]}"
+        else:
+            link = f"https://t.me/{ch_id}"
+    else:
+        link = raw_link
+
     ok = await db.add_required_channel(
-        channel_id=data["channel_id"],
+        channel_id=ch_id,
         channel_name=data["channel_name"],
-        invite_link=link
+        invite_link=link,
+        channel_type="telegram"
     )
     if ok:
         await message.answer(
-            f"🎉 <b>Kanal muvaffaqiyatli qo‘shildi!</b>\n\n"
-            f"📢 <b>Nomi:</b> {data['channel_name']}\n"
-            f"🔑 <b>ID/Username:</b> <code>{data['channel_id']}</code>\n\n"
+            f"🎉 <b>Telegram kanali muvaffaqiyatli qo‘shildi!</b>\n\n"
+            f"📢 <b>Nomi:</b> {html.escape(data['channel_name'])}\n"
+            f"🔑 <b>ID/Username:</b> <code>{html.escape(ch_id)}</code>\n"
+            f"🔗 <b>Havola:</b> {link}\n\n"
             "Endi bepul foydalanuvchilar ushbu kanalga a'zo bo‘lmasdan bepul filmlarni ko‘ra olmaydilar.",
             parse_mode="HTML",
             reply_markup=get_main_keyboard(True)
@@ -901,7 +1081,7 @@ async def cb_del_channel(call: CallbackQuery):
     ch_id = call.data.split(":")[1]
     ok = await db.remove_required_channel(ch_id)
     if ok:
-        await call.answer("✅ Kanal olib tashlandi!", show_alert=True)
+        await call.answer("✅ Homiy muvaffaqiyatli olib tashlandi!", show_alert=True)
         await show_required_channels(call)
     else:
         await call.answer("❌ O'chirishda xatolik!", show_alert=True)

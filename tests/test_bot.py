@@ -409,5 +409,71 @@ class EnterpriseBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("⚙️ Admin panel", buttons_flat)
         self.assertIn("💎 Premium sozlamalari", buttons_flat)
 
+    async def test_20_channel_subscription_and_social_media(self):
+        """Telegram, Instagram va YouTube homiy kanallari tizimini tekshirish"""
+        from utils.channel_check import (
+            normalize_telegram_channel_id,
+            normalize_instagram_link,
+            normalize_youtube_link,
+            get_subscription_keyboard,
+            check_user_channels_subscription
+        )
+
+        # 1. Normalizatsiya tekshiruvi
+        self.assertEqual(normalize_telegram_channel_id("https://t.me/kino_olami"), "@kino_olami")
+        self.assertEqual(normalize_telegram_channel_id("t.me/kino_olami"), "@kino_olami")
+        self.assertEqual(normalize_telegram_channel_id("kino_olami"), "@kino_olami")
+        self.assertEqual(normalize_telegram_channel_id("@kino_olami"), "@kino_olami")
+        self.assertEqual(normalize_telegram_channel_id("-1001234567890"), "-1001234567890")
+
+        insta_un, insta_url = normalize_instagram_link("@kino_olami")
+        self.assertEqual(insta_un, "@kino_olami")
+        self.assertEqual(insta_url, "https://www.instagram.com/kino_olami/")
+
+        yt_un, yt_url = normalize_youtube_link("@kino_olami")
+        self.assertEqual(yt_un, "@kino_olami")
+        self.assertEqual(yt_url, "https://www.youtube.com/@kino_olami")
+
+        # 2. Bazaga Telegram, Instagram va YouTube qo'shish
+        ok1 = await db.add_required_channel(
+            channel_id="@test_tg_chan",
+            channel_name="Telegram Kanal",
+            invite_link="https://t.me/test_tg_chan",
+            channel_type="telegram"
+        )
+        self.assertTrue(ok1)
+
+        ok2 = await db.add_required_channel(
+            channel_id="@test_insta",
+            channel_name="Instagram Sahifa",
+            invite_link="https://www.instagram.com/test_insta/",
+            channel_type="instagram"
+        )
+        self.assertTrue(ok2)
+
+        ok3 = await db.add_required_channel(
+            channel_id="@test_yt",
+            channel_name="YouTube Kanal",
+            invite_link="https://www.youtube.com/@test_yt",
+            channel_type="youtube"
+        )
+        self.assertTrue(ok3)
+
+        # 3. Kanallarni olish va klaviatura shakllanishini tekshirish
+        channels = await db.get_required_channels()
+        self.assertGreaterEqual(len(channels), 3)
+
+        kb = get_subscription_keyboard(channels)
+        self.assertIsNotNone(kb)
+        btn_texts = [b.text for row in kb.inline_keyboard for b in row]
+        self.assertTrue(any("📢" in t for t in btn_texts))
+        self.assertTrue(any("📸" in t for t in btn_texts))
+        self.assertTrue(any("🔴" in t for t in btn_texts))
+        self.assertTrue(any("✅ A'zo bo'ldim / Tekshirish" in t for t in btn_texts))
+
+        # 4. Tozalash
+        for ch in channels:
+            await db.remove_required_channel(ch["channel_id"])
+
 if __name__ == "__main__":
     unittest.main()

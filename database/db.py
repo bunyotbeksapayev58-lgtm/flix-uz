@@ -332,16 +332,22 @@ class Database:
                 )
             """)
 
-            # 18. REQUIRED CHANNELS (Majburiy obuna kanallari)
+            # 18. REQUIRED CHANNELS (Majburiy obuna kanallari: Telegram, Instagram, YouTube)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS required_channels (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     channel_id TEXT NOT NULL UNIQUE,
                     channel_name TEXT,
                     invite_link TEXT,
+                    channel_type TEXT DEFAULT 'telegram',
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            async with db.execute("PRAGMA table_info(required_channels)") as cur:
+                rc_cols = [row[1] for row in await cur.fetchall()]
+            if "channel_type" not in rc_cols:
+                await db.execute("ALTER TABLE required_channels ADD COLUMN channel_type TEXT DEFAULT 'telegram'")
 
             # 19. MOVIE REQUESTS (Foydalanuvchilar kino so'rovlari)
             await db.execute("""
@@ -1153,13 +1159,23 @@ class Database:
 
     # ==================== MAJBURIY OBUNA KANALLARI ====================
 
-    async def add_required_channel(self, channel_id: str, channel_name: str = "", invite_link: str = "") -> bool:
+    async def add_required_channel(
+        self,
+        channel_id: str,
+        channel_name: str = "",
+        invite_link: str = "",
+        channel_type: str = "telegram"
+    ) -> bool:
         async with self._connect() as db:
             try:
                 await db.execute("""
-                    INSERT INTO required_channels (channel_id, channel_name, invite_link)
-                    VALUES (?, ?, ?)
-                """, (channel_id.strip(), channel_name.strip(), invite_link.strip()))
+                    INSERT INTO required_channels (channel_id, channel_name, invite_link, channel_type)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(channel_id) DO UPDATE SET
+                        channel_name = excluded.channel_name,
+                        invite_link = excluded.invite_link,
+                        channel_type = excluded.channel_type
+                """, (channel_id.strip(), channel_name.strip(), invite_link.strip(), channel_type.strip()))
                 await db.commit()
                 return True
             except Exception:
