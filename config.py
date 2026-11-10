@@ -32,5 +32,5 @@ DB_PATH = BASE_DIR / "database" / "cinema.db"
 
 # Mini App (WebApp) Sozlamalari
 WEBAPP_HOST: str = os.getenv("WEBAPP_HOST", "0.0.0.0")
-WEBAPP_PORT: int = int(os.getenv("WEBAPP_PORT", "8080"))
+WEBAPP_PORT: int = int(os.getenv("PORT", os.getenv("WEBAPP_PORT", "8080")))
 WEBAPP_URL: str = os.getenv("WEBAPP_URL", f"http://localhost:{WEBAPP_PORT}").strip()
