@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="uz" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>FlixUz Admin Mini App</title>
+  <!-- Telegram WebApp SDK -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#fef2f2',
+              500: '#ef4444',
+              600: '#dc2626',
+              700: '#b91c1c',
+            },
+            dark: {
+              bg: '#0f172a',
+              card: '#1e293b',
+              border: '#334155'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #0b0f19;
+      color: #f1f5f9;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .glass {
+      background: rgba(30, 41, 59, 0.7);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 4px;
+      height: 4px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #475569;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col pb-20 custom-scrollbar">
+
+  <!-- AUTH / PERMISSION MODAL -->
+  <div id="auth-loading" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950 p-6 text-center">
+    <div class="w-16 h-16 border-4 border-red-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+    <h2 class="text-xl font-bold text-white mb-2">FlixUz Admin Panel</h2>
+    <p class="text-sm text-slate-400" id="auth-status-text">Adminlik huquqi tekshirilmoqda...</p>
+  </div>
+
+  <div id="access-denied" class="hidden fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950 p-6 text-center">
+    <div class="w-20 h-20 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mb-4">
+      <i data-lucide="shield-alert" class="w-10 h-10"></i>
+    </div>
+    <h2 class="text-2xl font-bold text-white mb-2">Kirish taqiqlandi!</h2>
+    <p class="text-slate-400 text-sm max-w-sm mb-6">Ushbu Mini App faqat bot administratorlari uchun mo‘ljallangan.</p>
+    <button onclick="Telegram.WebApp.close()" class="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-medium text-sm transition">
+      Yopish
+    </button>
+  </div>
+
+  <!-- MAIN APP CONTAINER -->
+  <div id="app-container" class="hidden flex-1 flex flex-col max-w-4xl mx-auto w-full px-4 pt-4">
+
+    <!-- HEADER -->
+    <header class="flex items-center justify-between pb-4 border-b border-slate-800">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-red-600 to-rose-400 flex items-center justify-center shadow-lg shadow-red-500/20">
+          <i data-lucide="clapperboard" class="w-5 h-5 text-white"></i>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold text-white leading-tight">FlixUz Admin</h1>
+          <p class="text-xs text-slate-400" id="admin-badge">Admin</p>
+        </div>
+      </div>
+      <button onclick="refreshCurrentTab()" class="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 transition">
+        <i data-lucide="rotate-cw" class="w-4 h-4"></i>
+      </button>
+    </header>
+
+    <!-- CONTENT AREAS -->
+    <main class="flex-1 mt-4">
+
+      <!-- TAB 1: DASHBOARD / STATISTIKA -->
+      <section id="tab-dashboard" class="space-y-4">
+        <!-- STATS OVERVIEW CARDS -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div class="glass p-3.5 rounded-2xl">
+            <div class="flex items-center justify-between text-slate-400 text-xs mb-1">
+              <span>Foydalanuvchilar</span>
+              <i data-lucide="users" class="w-4 h-4 text-blue-400"></i>
+            </div>
+            <div class="text-2xl font-extrabold text-white" id="stat-total-users">0</div>
+            <div class="text-[10px] text-emerald-400 mt-1 flex items-center">
+              <span id="stat-monthly-users">0</span> faol (oylik)
+            </div>
+          </div>
+
+          <div class="glass p-3.5 rounded-2xl">
+            <div class="flex items-center justify-between text-slate-400 text-xs mb-1">
+              <span>Premium Userlar</span>
+              <i data-lucide="star" class="w-4 h-4 text-amber-400"></i>
+            </div>
+            <div class="text-2xl font-extrabold text-amber-400" id="stat-premium-users">0</div>
+            <div class="text-[10px] text-slate-400 mt-1">Pullik obunachi</div>
+          </div>
+
+          <div class="glass p-3.5 rounded-2xl">
+            <div class="flex items-center justify-between text-slate-400 text-xs mb-1">
+              <span>Jami Medialar</span>
+              <i data-lucide="film" class="w-4 h-4 text-purple-400"></i>
+            </div>
+            <div class="text-2xl font-extrabold text-white" id="stat-total-media">0</div>
+            <div class="text-[10px] text-purple-400 mt-1">Kino, Serial, Anime</div>
+          </div>
+
+          <div class="glass p-3.5 rounded-2xl">
+            <div class="flex items-center justify-between text-slate-400 text-xs mb-1">
+              <span>Ko‘rishlar</span>
+              <i data-lucide="eye" class="w-4 h-4 text-rose-400"></i>
+            </div>
+            <div class="text-2xl font-extrabold text-rose-400" id="stat-total-views">0</div>
+            <div class="text-[10px] text-slate-400 mt-1">Umumiy ko‘rishlar</div>
+          </div>
+        </div>
+
+        <!-- CATEGORIES BREAKDOWN -->
+        <div class="glass p-4 rounded-2xl space-y-3">
+          <h3 class="text-sm font-semibold text-slate-200">Kategoriyalar bo'yicha taqsimot</h3>
+          <div class="grid grid-cols-2 gap-2 text-xs">
+            <div class="bg-slate-800/60 p-2.5 rounded-xl flex items-center justify-between">
+              <span class="flex items-center gap-1.5">🎬 Filmlar:</span>
+              <span class="font-bold text-white" id="stat-kino">0</span>
+            </div>
+            <div class="bg-slate-800/60 p-2.5 rounded-xl flex items-center justify-between">
+              <span class="flex items-center gap-1.5">📺 Seriallar:</span>
+              <span class="font-bold text-white" id="stat-serial">0</span>
+            </div>
+            <div class="bg-slate-800/60 p-2.5 rounded-xl flex items-center justify-between">
+              <span class="flex items-center gap-1.5">⛩ Anime:</span>
+              <span class="font-bold text-white" id="stat-anime">0</span>
+            </div>
+            <div class="bg-slate-800/60 p-2.5 rounded-xl flex items-center justify-between">
+              <span class="flex items-center gap-1.5">🎭 Dramalar:</span>
+              <span class="font-bold text-white" id="stat-drama">0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- QUICK SHORTCUTS -->
+        <div class="grid grid-cols-2 gap-3 pt-2">
+          <button onclick="switchTab('add-media')" class="p-3 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition shadow-lg shadow-red-600/20">
+            <i data-lucide="plus-circle" class="w-4 h-4"></i> Yangi Media Qo'shish
+          </button>
+          <button onclick="switchTab('broadcast')" class="p-3 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition">
+            <i data-lucide="send" class="w-4 h-4 text-blue-400"></i> Xabar Tarqatish
+          </button>
+        </div>
+      </section>
+
+      <!-- TAB 2: MEDIALAR RO'YXATI -->
+      <section id="tab-media" class="hidden space-y-4">
+        <!-- Search and Filters -->
+        <div class="space-y-2">
+          <div class="relative">
+            <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400"></i>
+            <input type="text" id="media-search-input" placeholder="Nomi yoki kodini qidiring..." 
+              oninput="debouncedSearchMedia()"
+              class="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-800/80 border border-slate-700 text-white text-sm focus:outline-none focus:border-red-500">
+          </div>
+          <!-- Category pills -->
+          <div class="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+            <button onclick="filterMediaCategory('')" id="cat-btn-all" class="px-3 py-1.5 rounded-lg bg-red-600 text-white font-medium whitespace-nowrap">Barchasi</button>
+            <button onclick="filterMediaCategory('kino')" id="cat-btn-kino" class="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 font-medium whitespace-nowrap">🎬 Kino</button>
+            <button onclick="filterMediaCategory('serial')" id="cat-btn-serial" class="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 font-medium whitespace-nowrap">📺 Serial</button>
+            <button onclick="filterMediaCategory('anime')" id="cat-btn-anime" class="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 font-medium whitespace-nowrap">⛩ Anime</button>
+            <button onclick="filterMediaCategory('drama')" id="cat-btn-drama" class="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 font-medium whitespace-nowrap">🎭 Drama</button>
+          </div>
+        </div>
+
+        <!-- Media list container -->
+        <div id="media-list-container" class="space-y-3">
+          <div class="text-center py-10 text-slate-500 text-sm">Medialar yuklanmoqda...</div>
+        </div>
+      </section>
+
+      <!-- TAB 3: YANGI MEDIA QO'SHISH -->
+      <section id="tab-add-media" class="hidden">
+        <form id="add-media-form" onsubmit="submitNewMedia(event)" class="glass p-4 rounded-2xl space-y-3 text-sm">
+          <h2 class="text-base font-bold text-white mb-2 flex items-center gap-2">
+            <i data-lucide="video" class="w-5 h-5 text-red-500"></i> Yangi Video / Serial Qo‘shish
+          </h2>
+
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Toifasi *</label>
+            <select id="form-category" required class="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-red-500">
+              <option value="kino">🎬 Kino (Film)</option>
+              <option value="serial">📺 Serial</option>
+              <option value="anime">⛩ Anime</option>
+              <option value="drama">🎭 Drama (Koreys/Xitoy)</option>
+            </select>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Qidiruv Kodi (ID) *</label>
+              <input type="text" id="form-code" placeholder="101, SP02..." required
+                class="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-red-500">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Kirish Huquqi *</label>
+              <select id="form-premium" class="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-red-500">
+                <option value="0">🆓 Bepul (Hamma uchun)</option>
+                <option value="1">⭐ Faqat Premium</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Nomi (Sarlavha) *</label>
+            <input type="text" id="form-title" placeholder="Masalan: Qasoskorlar: Intiho" required
+              class="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-red-500">
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Janri</label>
+              <input type="text" id="form-genre" placeholder="Jangari, Fantastika"
+                class="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-red-500">
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Yili</label>
+              <input type="text" id="form-year" placeholder="2024"
+                class="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-red-500">
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Telegram Video File ID *</label>
+            <input type="text" id="form-file-id" placeholder="BAACAgIAAxkBAA..." required
+              class="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs font-mono focus:outline-none focus:border-red-500">
+            <span class="text-[10px] text-slate-500">Botga yuborilgan video yoki faylning Telegram File ID raqami</span>
+          </div>
+
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Tavsifi / Syujet</label>
+            <textarea id="form-description" rows="2" placeholder="Film haqida qisqacha ma'lumot..."
+              class="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-red-500"></textarea>
+          </div>
+
+          <button type="submit" id="add-media-btn" class="w-full py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold transition shadow-lg shadow-red-600/30">
+            Saqlash
+          </button>
+        </form>
+      </section>
+
+      <!-- TAB 4: FOYDALANUVCHILAR -->
+      <section id="tab-users" class="hidden space-y-4">
+        <div class="relative">
+          <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400"></i>
+          <input type="text" id="users-search-input" placeholder="ID yoki username bo'yicha qidiruv..." 
+            oninput="debouncedSearchUsers()"
+            class="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-800/80 border border-slate-700 text-white text-sm focus:outline-none focus:border-red-500">
+        </div>
+        <div id="users-list-container" class="space-y-2.5">
+          <div class="text-center py-10 text-slate-500 text-sm">Foydalanuvchilar yuklanmoqda...</div>
+        </div>
+      </section>
+
+      <!-- TAB 5: BROADCAST / XABAR TARQATISH -->
+      <section id="tab-broadcast" class="hidden">
+        <div class="glass p-4 rounded-2xl space-y-3 text-sm">
+          <h2 class="text-base font-bold text-white flex items-center gap-2">
+            <i data-lucide="send" class="w-5 h-5 text-blue-400"></i> Barcha Foydalanuvchilarga Xabar
+          </h2>
+          <p class="text-xs text-slate-400">Botning barcha a'zolariga e'lon, yangilik yoki reklama yuborishingiz mumkin (HTML teglari qo'llab-quvvatlanadi: &lt;b&gt;, &lt;i&gt;, &lt;a&gt;).</p>
+          <textarea id="broadcast-text" rows="5" placeholder="Salom barchaga! Yangi premyeralar qo'shildi..."
+            class="w-full p-3 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:border-blue-500"></textarea>
+          <button onclick="sendBroadcast()" id="broadcast-btn" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition">
+            Xabarni Tarqatish
+          </button>
+        </div>
+      </section>
+
+      <!-- TAB 6: ADMINLAR -->
+      <section id="tab-admins" class="hidden space-y-4">
+        <div class="glass p-4 rounded-2xl space-y-3 text-sm">
+          <h3 class="font-bold text-white">Yangi Admin Qo'shish</h3>
+          <div class="flex gap-2">
+            <input type="text" id="new-admin-id" placeholder="Telegram ID yoki @username (masalan: @ali_dev)"
+              class="flex-1 p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:border-red-500">
+            <button onclick="submitNewAdmin()" class="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-medium rounded-xl text-sm">
+              Qo'shish
+            </button>
+          </div>
+        </div>
+        <div class="space-y-2">
+          <h3 class="text-xs font-semibold text-slate-400 px-1">Mavjud Adminlar:</h3>
+          <div id="admins-list-container" class="space-y-2"></div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- EPISODES MODAL (SERIAL VA ANIMELAR QISMLARI) -->
+    <div id="episodes-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+      <div class="glass w-full max-w-lg rounded-2xl p-5 max-h-[90vh] flex flex-col custom-scrollbar overflow-hidden">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-700 mb-3">
+          <div>
+            <h3 class="font-bold text-white text-base" id="episodes-modal-title">Qismlar boshqaruvi</h3>
+            <p class="text-xs text-slate-400" id="episodes-modal-code">Kod: -</p>
+          </div>
+          <button onclick="closeEpisodesModal()" class="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+
+        <!-- Episodes Tab Selector -->
+        <div class="flex border-b border-slate-700 mb-3 text-xs">
+          <button type="button" id="ep-tab-single" onclick="switchEpTab('single')" class="py-1 px-3 border-b-2 border-emerald-500 font-semibold text-white">➕ Bittalab qo‘shish</button>
+          <button type="button" id="ep-tab-batch" onclick="switchEpTab('batch')" class="py-1 px-3 text-slate-400 hover:text-white font-medium">📦 Ommaviy yuklash (Batch)</button>
+        </div>
+
+        <!-- Add Episode Form (Single) -->
+        <form id="ep-single-form" onsubmit="submitNewEpisode(event)" class="bg-slate-800/60 p-3 rounded-xl mb-4 space-y-2 text-xs">
+          <div class="font-semibold text-slate-200">➕ Bitta Qism Qo‘shish</div>
+          <div class="grid grid-cols-2 gap-2">
+            <input type="number" id="ep-number" placeholder="Qism raqami (masalan: 1)" required
+              class="p-2 rounded-lg bg-slate-900 border border-slate-700 text-white">
+            <input type="text" id="ep-title" placeholder="Qism nomi (ixtiyoriy)"
+              class="p-2 rounded-lg bg-slate-900 border border-slate-700 text-white">
+          </div>
+          <input type="text" id="ep-file-id" placeholder="Telegram Video File ID" required
+            class="w-full p-2 rounded-lg bg-slate-900 border border-slate-700 text-white font-mono text-[10px]">
+          <button type="submit" class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg">
+            Qismni Saqlash
+          </button>
+        </form>
+
+        <!-- Add Episodes Batch Form -->
+        <div id="ep-batch-form" class="hidden bg-slate-800/60 p-3 rounded-xl mb-4 space-y-2 text-xs">
+          <div class="font-semibold text-slate-200">📦 Ommaviy Qismlarni Yuklash (Batch)</div>
+          <p class="text-[11px] text-slate-400">Har bir qatorga bittadan Telegram File ID yozing yoki <code>1: File_ID</code> shaklida kiriting:</p>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[10px] text-slate-400">Boshlang‘ich qism:</label>
+              <input type="number" id="ep-batch-start" value="1" min="1"
+                class="w-full p-2 rounded-lg bg-slate-900 border border-slate-700 text-white">
+            </div>
+            <div>
+              <label class="text-[10px] text-slate-400">Nechanchi qismgacha bepul:</label>
+              <input type="number" id="ep-batch-free" value="0" min="0" placeholder="0 = barchasi bepul"
+                class="w-full p-2 rounded-lg bg-slate-900 border border-slate-700 text-white">
+            </div>
+          </div>
+          <textarea id="ep-batch-text" rows="4" placeholder="BAACAgIAAxkBAAE...&#10;BAACAgIAAxkBAAF...&#10;BAACAgIAAxkBAAG..."
+            class="w-full p-2 rounded-lg bg-slate-900 border border-slate-700 text-white font-mono text-[10px]"></textarea>
+          <button type="button" onclick="submitBatchEpisodes()" class="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg">
+            📦 Barcha qismlarni bir vaqtda saqlash
+          </button>
+        </div>
+
+        <!-- Episodes List -->
+        <div class="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar" id="episodes-list">
+          <div class="text-center py-4 text-slate-500 text-xs">Qismlar yuklanmoqda...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BOTTOM NAVIGATION BAR -->
+    <nav class="fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-md border-t border-slate-800 px-3 py-2 flex justify-around items-center">
+      <button onclick="switchTab('dashboard')" id="nav-dashboard" class="flex flex-col items-center gap-1 text-red-500 transition">
+        <i data-lucide="layout-dashboard" class="w-5 h-5"></i>
+        <span class="text-[10px] font-medium">Asosiy</span>
+      </button>
+
+      <button onclick="switchTab('media')" id="nav-media" class="flex flex-col items-center gap-1 text-slate-400 hover:text-slate-200 transition">
+        <i data-lucide="film" class="w-5 h-5"></i>
+        <span class="text-[10px] font-medium">Medialar</span>
+      </button>
+
+      <button onclick="switchTab('add-media')" id="nav-add-media" class="flex flex-col items-center gap-1 text-slate-400 hover:text-slate-200 transition">
+        <i data-lucide="plus-circle" class="w-5 h-5"></i>
+        <span class="text-[10px] font-medium">Qo'shish</span>
+      </button>
+
+      <button onclick="switchTab('users')" id="nav-users" class="flex flex-col items-center gap-1 text-slate-400 hover:text-slate-200 transition">
+        <i data-lucide="users" class="w-5 h-5"></i>
+        <span class="text-[10px] font-medium">Userlar</span>
+      </button>
+
+      <button onclick="switchTab('admins')" id="nav-admins" class="flex flex-col items-center gap-1 text-slate-400 hover:text-slate-200 transition">
+        <i data-lucide="shield-check" class="w-5 h-5"></i>
+        <span class="text-[10px] font-medium">Adminlar</span>
+      </button>
+    </nav>
+
+  </div>
+
+  <!-- CLIENT LOGIC SCRIPT -->
+  <script>
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    let tg = window.Telegram?.WebApp;
+    let initData = tg?.initData || '';
+    let currentTab = 'dashboard';
+    let currentCategoryFilter = '';
+    let searchTimeout = null;
+    let activeMediaCodeForEpisodes = '';
+
+    // Init Telegram WebApp
+    if (tg) {
+      tg.expand();
+      tg.ready();
+    }
+
+    async function apiRequest(endpoint, method = 'GET', body = null) {
+      const headers = {
+        'Content-Type': 'application/json',
+        'X-Telegram-Init-Data': initData
+      };
+      const options = { method, headers };
+      if (body) options.body = JSON.stringify(body);
+
+      try {
+        const res = await fetch(endpoint, options);
+        return await res.json();
+      } catch (err) {
+        console.error('API Error:', err);
+        return { ok: false, error: err.message };
+      }
+    }
+
+    // CHECK AUTH ON LOAD
+    async function checkAuth() {
+      const res = await apiRequest('/api/auth/verify', 'POST', { initData });
+      document.getElementById('auth-loading').classList.add('hidden');
+
+      if (!res.ok) {
+        document.getElementById('access-denied').classList.remove('hidden');
+        return;
+      }
+
+      // Show App
+      document.getElementById('app-container').classList.remove('hidden');
+      const user = res.user;
+      document.getElementById('admin-badge').textContent = (res.is_super_admin ? '👑 Bosh Admin' : 'Admin') + ` (${user.first_name || 'Admin'})`;
+
+      loadStats();
+      lucide.createIcons();
+    }
+
+    // TABS SWITCHING
+    function switchTab(tab) {
+      currentTab = tab;
+      const tabs = ['dashboard', 'media', 'add-media', 'users', 'broadcast', 'admins'];
+      tabs.forEach(t => {
+        const el = document.getElementById(`tab-${t}`);
+        if (el) el.classList.toggle('hidden', t !== tab);
+
+        const navBtn = document.getElementById(`nav-${t}`);
+        if (navBtn) {
+          if (t === tab) {
+            navBtn.className = "flex flex-col items-center gap-1 text-red-500 transition";
+          } else {
+            navBtn.className = "flex flex-col items-center gap-1 text-slate-400 hover:text-slate-200 transition";
+          }
+        }
+      });
+
+      if (tab === 'dashboard') loadStats();
+      if (tab === 'media') loadMedia();
+      if (tab === 'users') loadUsers();
+      if (tab === 'admins') loadAdmins();
+
+      lucide.createIcons();
+    }
+
+    function refreshCurrentTab() {
+      switchTab(currentTab);
+    }
+
+    // 1. STATS
+    async function loadStats() {
+      const res = await apiRequest('/api/stats');
+      if (!res.ok) return;
+
+      const s = res.stats;
+      document.getElementById('stat-total-users').textContent = s.total_users || 0;
+      document.getElementById('stat-monthly-users').textContent = s.monthly_active_users || 0;
+      document.getElementById('stat-premium-users').textContent = s.premium_users || 0;
+      document.getElementById('stat-total-media').textContent = s.total_media || 0;
+      document.getElementById('stat-total-views').textContent = s.total_views || 0;
+
+      document.getElementById('stat-kino').textContent = s.kino_count || 0;
+      document.getElementById('stat-serial').textContent = s.serial_count || 0;
+      document.getElementById('stat-anime').textContent = s.anime_count || 0;
+      document.getElementById('stat-drama').textContent = s.drama_count || 0;
+    }
+
+    // 2. MEDIA LIST
+    async function loadMedia(search = '') {
+      const container = document.getElementById('media-list-container');
+      container.innerHTML = '<div class="text-center py-6 text-slate-500 text-sm">Yuklanmoqda...</div>';
+
+      let url = `/api/media?category=${currentCategoryFilter}&search=${encodeURIComponent(search)}`;
+      const res = await apiRequest(url);
+
+      if (!res.ok || !res.items || res.items.length === 0) {
+        container.innerHTML = '<div class="text-center py-10 text-slate-500 text-sm">Hech qanday media topilmadi.</div>';
+        return;
+      }
+
+      container.innerHTML = res.items.map(m => {
+        const isPrem = m.is_premium === 1;
+        const isSeries = m.category === 'serial' || m.category === 'anime' || m.category === 'drama';
+        const safeCode = escapeHtml(m.code);
+        const safeTitle = escapeHtml(m.title);
+        const safeCat = escapeHtml(m.category);
+        const safeGenre = escapeHtml(m.genre || 'Janrsiz');
+        const safeYear = escapeHtml(m.year || 'Yilsiz');
+        const rawCodeAttr = (m.code || '').replace(/'/g, "\\'");
+        const rawTitleAttr = (m.title || '').replace(/'/g, "\\'");
+        return `
+          <div class="glass p-3.5 rounded-2xl flex flex-col space-y-2.5">
+            <div class="flex items-start justify-between gap-2">
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-bold ${isPrem ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400'}">
+                    ${isPrem ? '⭐ Premium' : '🆓 Bepul'}
+                  </span>
+                  <span class="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 uppercase">${safeCat}</span>
+                  <span class="text-xs font-mono text-slate-400">#${safeCode}</span>
+                </div>
+                <h4 class="text-sm font-bold text-white mt-1 truncate">${safeTitle}</h4>
+                <div class="text-xs text-slate-400 mt-0.5">${safeGenre} • ${safeYear} • 👁 ${Number(m.views_count) || 0} ko‘rilgan</div>
+              </div>
+            </div>
+
+            <!-- Action buttons -->
+            <div class="flex items-center justify-end gap-2 pt-1 border-t border-slate-800 text-xs">
+              ${isSeries ? `
+                <button onclick="openEpisodesModal('${rawCodeAttr}', '${rawTitleAttr}')" class="px-2.5 py-1.5 rounded-lg bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 flex items-center gap-1">
+                  <i data-lucide="layers" class="w-3.5 h-3.5"></i> Qismlar
+                </button>
+              ` : ''}
+
+              <button onclick="toggleMediaAccess('${rawCodeAttr}')" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center gap-1">
+                <i data-lucide="lock" class="w-3.5 h-3.5"></i> ${isPrem ? 'Bepul qilish' : 'Premium qilish'}
+              </button>
+
+              <button onclick="deleteMedia('${rawCodeAttr}')" class="p-1.5 rounded-lg bg-red-600/20 text-red-400 hover:bg-red-600/30">
+                <i data-lucide="trash-2" class="w-4 h-4"></i>
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      lucide.createIcons();
+    }
+
+    function filterMediaCategory(cat) {
+      currentCategoryFilter = cat;
+      const categories = ['', 'kino', 'serial', 'anime', 'drama'];
+      categories.forEach(c => {
+        const btn = document.getElementById(`cat-btn-${c || 'all'}`);
+        if (btn) {
+          if (c === cat) {
+            btn.className = "px-3 py-1.5 rounded-lg bg-red-600 text-white font-medium whitespace-nowrap";
+          } else {
+            btn.className = "px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 font-medium whitespace-nowrap";
+          }
+        }
+      });
+      loadMedia(document.getElementById('media-search-input').value);
+    }
+
+    function debouncedSearchMedia() {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        loadMedia(document.getElementById('media-search-input').value);
+      }, 350);
+    }
+
+    async function toggleMediaAccess(code) {
+      const res = await apiRequest(`/api/media/${code}/toggle-access`, 'POST');
+      if (res.ok) {
+        loadMedia(document.getElementById('media-search-input').value);
+      }
+    }
+
+    async function deleteMedia(code) {
+      if (!confirm(`Haqiqatan ham #${code} kodli mediani o'chirmoqchimisiz?`)) return;
+      const res = await apiRequest(`/api/media/${code}`, 'DELETE');
+      if (res.ok) {
+        loadMedia(document.getElementById('media-search-input').value);
+      } else {
+        alert(res.error || "O'chirishda xatolik!");
+      }
+    }
+
+    // 3. ADD MEDIA
+    async function submitNewMedia(e) {
+      e.preventDefault();
+      const btn = document.getElementById('add-media-btn');
+      btn.disabled = true;
+      btn.textContent = "Saqlanmoqda...";
+
+      const payload = {
+        category: document.getElementById('form-category').value,
+        code: document.getElementById('form-code').value.trim(),
+        is_premium: parseInt(document.getElementById('form-premium').value),
+        title: document.getElementById('form-title').value.trim(),
+        genre: document.getElementById('form-genre').value.trim(),
+        year: document.getElementById('form-year').value.trim(),
+        file_id: document.getElementById('form-file-id').value.trim(),
+        description: document.getElementById('form-description').value.trim(),
+      };
+
+      const res = await apiRequest('/api/media', 'POST', payload);
+      btn.disabled = false;
+      btn.textContent = "Saqlash";
+
+      if (res.ok) {
+        alert("✅ Media muvaffaqiyatli saqlandi!");
+        document.getElementById('add-media-form').reset();
+        switchTab('media');
+      } else {
+        alert("❌ Xatolik: " + (res.error || "Saqlab bo'lmadi"));
+      }
+    }
+
+    // 4. EPISODES MODAL (SERIALS & ANIME)
+    async function openEpisodesModal(code, title) {
+      activeMediaCodeForEpisodes = code;
+      document.getElementById('episodes-modal-title').textContent = title;
+      document.getElementById('episodes-modal-code').textContent = 'Kod: #' + code;
+      document.getElementById('episodes-modal').classList.remove('hidden');
+      loadEpisodes(code);
+    }
+
+    function closeEpisodesModal() {
+      document.getElementById('episodes-modal').classList.add('hidden');
+      activeMediaCodeForEpisodes = '';
+    }
+
+    async function loadEpisodes(code) {
+      const container = document.getElementById('episodes-list');
+      container.innerHTML = '<div class="text-center py-4 text-slate-500 text-xs">Yuklanmoqda...</div>';
+
+      const res = await apiRequest(`/api/media/${code}/episodes`);
+      if (!res.ok || !res.episodes || res.episodes.length === 0) {
+        container.innerHTML = '<div class="text-center py-4 text-slate-500 text-xs">Hozircha birorta ham qism qo‘shilmagan.</div>';
+        return;
+      }
+
+      container.innerHTML = res.episodes.map(ep => `
+        <div class="bg-slate-900/80 p-2.5 rounded-xl flex items-center justify-between text-xs">
+          <div>
+            <div class="font-bold text-white">${Number(ep.episode_num)}-qism ${ep.title ? '— ' + escapeHtml(ep.title) : ''}</div>
+            <div class="text-[10px] text-slate-400 font-mono truncate max-w-[200px]">${escapeHtml(ep.file_id)}</div>
+          </div>
+          <button onclick="deleteEpisode(${Number(ep.id)})" class="p-1.5 text-red-400 hover:bg-red-500/20 rounded-lg">
+            <i data-lucide="trash" class="w-4 h-4"></i>
+          </button>
+        </div>
+      `).join('');
+
+      lucide.createIcons();
+    }
+
+    async function submitNewEpisode(e) {
+      e.preventDefault();
+      const num = document.getElementById('ep-number').value;
+      const title = document.getElementById('ep-title').value;
+      const fileId = document.getElementById('ep-file-id').value;
+
+      const res = await apiRequest(`/api/media/${activeMediaCodeForEpisodes}/episodes`, 'POST', {
+        episode_num: num,
+        title: title,
+        file_id: fileId
+      });
+
+      if (res.ok) {
+        document.getElementById('ep-number').value = parseInt(num) + 1;
+        document.getElementById('ep-title').value = '';
+        document.getElementById('ep-file-id').value = '';
+        loadEpisodes(activeMediaCodeForEpisodes);
+      } else {
+        alert("Xatolik: " + res.error);
+      }
+    }
+
+    async function deleteEpisode(id) {
+      if (!confirm("Ushbu qismni o'chirmoqchimisiz?")) return;
+      const res = await apiRequest(`/api/episodes/${id}`, 'DELETE');
+      if (res.ok) {
+        loadEpisodes(activeMediaCodeForEpisodes);
+      }
+    }
+
+    function switchEpTab(tab) {
+      const singleTabBtn = document.getElementById('ep-tab-single');
+      const batchTabBtn = document.getElementById('ep-tab-batch');
+      const singleForm = document.getElementById('ep-single-form');
+      const batchForm = document.getElementById('ep-batch-form');
+
+      if (tab === 'single') {
+        singleForm.classList.remove('hidden');
+        batchForm.classList.add('hidden');
+        singleTabBtn.className = 'py-1 px-3 border-b-2 border-emerald-500 font-semibold text-white';
+        batchTabBtn.className = 'py-1 px-3 text-slate-400 hover:text-white font-medium';
+      } else {
+        singleForm.classList.add('hidden');
+        batchForm.classList.remove('hidden');
+        singleTabBtn.className = 'py-1 px-3 text-slate-400 hover:text-white font-medium';
+        batchTabBtn.className = 'py-1 px-3 border-b-2 border-indigo-500 font-semibold text-white';
+      }
+    }
+
+    async function submitBatchEpisodes() {
+      const text = document.getElementById('ep-batch-text').value.trim();
+      if (!text) {
+        alert("Iltimos, kamida bitta Telegram File ID kiriting!");
+        return;
+      }
+      const startEp = parseInt(document.getElementById('ep-batch-start').value) || 1;
+      const freeUpTo = parseInt(document.getElementById('ep-batch-free').value) || 0;
+
+      const res = await apiRequest(`/api/media/${activeMediaCodeForEpisodes}/episodes/batch`, 'POST', {
+        batch_text: text,
+        start_ep: startEp,
+        free_up_to: freeUpTo
+      });
+
+      if (res.ok) {
+        alert(res.message || "Qismlar muvaffaqiyatli saqlandi!");
+        document.getElementById('ep-batch-text').value = '';
+        loadEpisodes(activeMediaCodeForEpisodes);
+      } else {
+        alert("Xatolik: " + (res.error || "Saqlashda xatolik yuz berdi"));
+      }
+    }
+
+    // 5. USERS
+    async function loadUsers(search = '') {
+      const container = document.getElementById('users-list-container');
+      container.innerHTML = '<div class="text-center py-6 text-slate-500 text-sm">Yuklanmoqda...</div>';
+
+      const [usersRes, adminsRes] = await Promise.all([
+        apiRequest(`/api/users?search=${encodeURIComponent(search)}`),
+        apiRequest('/api/admins')
+      ]);
+
+      if (!usersRes.ok || !usersRes.users || usersRes.users.length === 0) {
+        container.innerHTML = '<div class="text-center py-6 text-slate-500 text-sm">Foydalanuvchilar topilmadi.</div>';
+        return;
+      }
+
+      const adminIds = new Set((adminsRes.admins || []).map(a => a.id));
+
+      container.innerHTML = usersRes.users.map(u => {
+        const isPrem = u.is_premium === 1;
+        const isBlocked = u.is_blocked === 1;
+        const isAdmin = adminIds.has(u.id);
+        const safeName = escapeHtml(u.first_name || 'NoName');
+        const safeUsername = escapeHtml(u.username || 'mavjud emas');
+        const safeId = Number(u.id);
+        return `
+          <div class="glass p-3 rounded-2xl flex items-center justify-between text-xs">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5">
+                <span class="font-bold text-white truncate">${safeName}</span>
+                ${isAdmin ? '<span class="px-1.5 py-0.5 rounded text-[9px] bg-red-600/30 text-red-400 font-bold">ADMIN</span>' : ''}
+                ${isPrem ? '<span class="text-amber-400 font-bold">⭐</span>' : ''}
+                ${isBlocked ? '<span class="text-red-500 font-bold">[Blok]</span>' : ''}
+              </div>
+              <div class="text-slate-400 text-[11px] truncate">ID: ${safeId} • @${safeUsername}</div>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <button onclick="toggleAdminUser(${safeId})" class="px-2 py-1 rounded-lg ${isAdmin ? 'bg-red-500/20 text-red-400' : 'bg-blue-500/20 text-blue-400'} text-[11px]">
+                ${isAdmin ? '🔻 Adminlik' : '👑 Admin'}
+              </button>
+              <button onclick="grantPremium(${safeId})" class="px-2 py-1 rounded-lg bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 text-[11px]">
+                ⭐ 30 kun
+              </button>
+              <button onclick="toggleBlockUser(${safeId})" class="px-2 py-1 rounded-lg ${isBlocked ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'} text-[11px]">
+                ${isBlocked ? 'Ochish' : 'Blok'}
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function toggleAdminUser(id) {
+      const res = await apiRequest(`/api/users/${id}/toggle-admin`, 'POST');
+      if (res.ok) {
+        alert(res.message);
+        loadUsers(document.getElementById('users-search-input').value);
+      } else {
+        alert(res.error || "Xatolik yuz berdi!");
+      }
+    }
+
+    function debouncedSearchUsers() {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(() => {
+        loadUsers(document.getElementById('users-search-input').value);
+      }, 350);
+    }
+
+    async function toggleBlockUser(id) {
+      const res = await apiRequest(`/api/users/${id}/toggle-block`, 'POST');
+      if (res.ok) loadUsers(document.getElementById('users-search-input').value);
+    }
+
+    async function grantPremium(id) {
+      const res = await apiRequest(`/api/users/${id}/grant-premium`, 'POST', { days: 30 });
+      if (res.ok) {
+        alert("✅ 30 kunlik Premium berildi!");
+        loadUsers(document.getElementById('users-search-input').value);
+      }
+    }
+
+    // 6. BROADCAST
+    async function sendBroadcast() {
+      const text = document.getElementById('broadcast-text').value.trim();
+      if (!text) {
+        alert("Iltimos, xabar matnini kiriting!");
+        return;
+      }
+
+      if (!confirm("Haqiqatan ham ushbu xabarni barcha foydalanuvchilarga yubormoqchimisiz?")) return;
+
+      const btn = document.getElementById('broadcast-btn');
+      btn.disabled = true;
+      btn.textContent = "Yuborilmoqda...";
+
+      const res = await apiRequest('/api/broadcast', 'POST', { text });
+      btn.disabled = false;
+      btn.textContent = "Xabarni Tarqatish";
+
+      if (res.ok) {
+        alert("🚀 " + res.message);
+        document.getElementById('broadcast-text').value = '';
+      } else {
+        alert("❌ Xatolik: " + res.error);
+      }
+    }
+
+    // 7. ADMINS
+    async function loadAdmins() {
+      const container = document.getElementById('admins-list-container');
+      container.innerHTML = '<div class="text-center py-4 text-slate-500 text-xs">Yuklanmoqda...</div>';
+
+      const res = await apiRequest('/api/admins');
+      if (!res.ok || !res.admins) return;
+
+      container.innerHTML = res.admins.map(a => `
+        <div class="glass p-3 rounded-xl flex items-center justify-between text-xs">
+          <div>
+            <div class="font-bold text-white">${escapeHtml(a.first_name)} ${a.is_super_admin ? '<span class="text-amber-400">(Bosh Admin)</span>' : ''}</div>
+            <div class="text-slate-400 text-[10px]">ID: <code>${Number(a.id)}</code> ${a.username ? '@' + escapeHtml(a.username) : ''}</div>
+          </div>
+          ${!a.is_super_admin ? `
+            <button onclick="deleteAdmin(${Number(a.id)})" class="p-1.5 text-red-400 hover:bg-red-500/20 rounded-lg">
+              <i data-lucide="trash" class="w-4 h-4"></i>
+            </button>
+          ` : ''}
+        </div>
+      `).join('');
+
+      lucide.createIcons();
+    }
+
+    async function submitNewAdmin() {
+      const input = document.getElementById('new-admin-id');
+      const val = input.value.trim();
+      if (!val) return;
+
+      const res = await apiRequest('/api/admins', 'POST', { user_id: val });
+      if (res.ok) {
+        input.value = '';
+        loadAdmins();
+      } else {
+        alert("Xatolik: " + res.error);
+      }
+    }
+
+    async function deleteAdmin(id) {
+      if (!confirm("Ushbu adminni olib tashlamoqchimisiz?")) return;
+      const res = await apiRequest(`/api/admins/${id}`, 'DELETE');
+      if (res.ok) loadAdmins();
+    }
+
+    // Start checking auth
+    window.addEventListener('DOMContentLoaded', checkAuth);
+  </script>
+</body>
+</html>

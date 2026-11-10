@@ -1,0 +1,30 @@
+# Environment & sensitive secrets
+.env
+.env.*
+!.env.example
+
+# SQLite Databases & WAL files
+*.db
+*.db-wal
+*.db-shm
+database/*.db
+database/*.db-wal
+database/*.db-shm
+database/test_cinema.db
+
+# Backups & Logs
+backups/
+logs/
+*.log
+
+# Python cache & virtualenv
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Git & Docs
+.git/
+.gitignore
+README.md
