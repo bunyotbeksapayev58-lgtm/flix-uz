@@ -8,6 +8,7 @@ from handlers.movies import render_media_card
 
 router = Router()
 
+@router.message(Command("cancel"))
 @router.message(F.text == "❌ Bekor qilish")
 async def cancel_handler(message: Message, state: FSMContext):
     """Har qanday jarayonni bekor qilish"""

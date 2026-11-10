@@ -378,5 +378,36 @@ class EnterpriseBotTests(unittest.IsolatedAsyncioTestCase):
 
         await db.delete_media(code)
 
+    async def test_18_multi_super_admin_and_role_admin_check(self):
+        """Ko'p sonli super adminlar va rollar bo'yicha adminlikni tekshirish"""
+        test_admin_id = 9988776655
+        self.assertFalse(await db.is_admin(test_admin_id))
+
+        # Admin qo'shamiz
+        ok = await db.add_admin(test_admin_id, role="admin", added_by=111111)
+        self.assertTrue(ok)
+        self.assertTrue(await db.is_admin(test_admin_id))
+
+        # O'chirib tashlaymiz
+        ok_rem = await db.remove_admin(test_admin_id)
+        self.assertTrue(ok_rem)
+        self.assertFalse(await db.is_admin(test_admin_id))
+
+    async def test_19_admin_keyboards_safe_rendering(self):
+        """Admin klaviaturalarining xavfsiz va to'g'ri shakllanishi"""
+        from keyboards.inline import get_admin_keyboard
+        from keyboards.reply import get_main_keyboard
+
+        admin_inline = get_admin_keyboard()
+        self.assertIsNotNone(admin_inline)
+        self.assertTrue(len(admin_inline.inline_keyboard) > 5)
+
+        main_reply = get_main_keyboard(is_admin=True)
+        self.assertIsNotNone(main_reply)
+        # ⚙️ Admin panel tugmasi mavjudligini tekshirish
+        buttons_flat = [b.text for row in main_reply.keyboard for b in row]
+        self.assertIn("⚙️ Admin panel", buttons_flat)
+        self.assertIn("💎 Premium sozlamalari", buttons_flat)
+
 if __name__ == "__main__":
     unittest.main()

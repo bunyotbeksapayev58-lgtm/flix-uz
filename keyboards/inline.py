@@ -149,10 +149,17 @@ def get_episode_player_keyboard(media_code: str, prev_id: Optional[int], next_id
 
 def get_admin_keyboard() -> InlineKeyboardMarkup:
     """Admin boshqaruv paneli tugmalari"""
-    buttons = [
-        [
+    buttons = []
+    if WEBAPP_URL and WEBAPP_URL.startswith("https://"):
+        buttons.append([
             InlineKeyboardButton(text="📱 Admin Mini Appni ochish", web_app=WebAppInfo(url=WEBAPP_URL)),
-        ],
+        ])
+    else:
+        buttons.append([
+            InlineKeyboardButton(text="📱 Admin Mini App (HTTPS yo'riqnoma)", callback_data="admin:miniapp_info"),
+        ])
+
+    buttons.extend([
         [
             InlineKeyboardButton(text="➕ Yangi media qo‘shish", callback_data="admin:addmedia"),
             InlineKeyboardButton(text="📦 Ommaviy qism yuklash", callback_data="admin:batchupload"),
@@ -191,7 +198,7 @@ def get_admin_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="❌ Adminni o‘chirish", callback_data="admin:removeadmin"),
         ],
-    ]
+    ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_category_select_keyboard() -> InlineKeyboardMarkup:

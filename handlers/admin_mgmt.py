@@ -1,3 +1,4 @@
+import html
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
@@ -116,10 +117,11 @@ async def process_add_admin(message: Message, state: FSMContext):
 async def appoint_admin(message: Message, target_id: int, added_by: int, target_name: str = "Admin"):
     """Admin tayinlash va barcha huquqlarni berish"""
     ok = await db.add_admin(user_id=target_id, added_by=added_by)
+    safe_name = html.escape(target_name)
     if ok:
         await message.answer(
             f"🎉 <b>Tabriklaymiz!</b>\n"
-            f"👤 <b>{target_name}</b> (<code>{target_id}</code>) muvaffaqiyatli <b>Teng Huquqli Admin</b> etib tayinlandi!\n\n"
+            f"👤 <b>{safe_name}</b> (<code>{target_id}</code>) muvaffaqiyatli <b>Teng Huquqli Admin</b> etib tayinlandi!\n\n"
             f"Endi u ham:\n"
             f"• Botga yangi kino, serial, anime va dramalar qo‘sha oladi\n"
             f"• Admin Mini Appga to‘liq kirish imkoniyatiga ega bo‘ldi\n"
@@ -167,7 +169,8 @@ async def start_remove_admin(event: Message | CallbackQuery, state: FSMContext):
         user_info = await db.get_user(a)
         name = user_info["first_name"] if user_info else str(a)
         role = " (Bosh Asoschi)" if a == super_admin_id else ""
-        admin_list_text += f"— <b>{name}</b> (<code>{a}</code>){role}\n"
+        safe_name = html.escape(name)
+        admin_list_text += f"— <b>{safe_name}</b> (<code>{a}</code>){role}\n"
         
         # O'chirish uchun tugma (bosh asoschidan tashqari)
         if a != super_admin_id and a != user_id:

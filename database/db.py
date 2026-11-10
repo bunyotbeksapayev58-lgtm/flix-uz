@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 import aiosqlite
 
-from config import DB_PATH, SUPER_ADMIN_ID
+from config import DB_PATH, SUPER_ADMIN_ID, SUPER_ADMIN_IDS
 
 logger = logging.getLogger(__name__)
 
@@ -387,17 +387,22 @@ class Database:
             for skey, sval in default_settings:
                 await db.execute("INSERT OR IGNORE INTO system_settings (key, value) VALUES (?, ?)", (skey, sval))
 
-            # Super adminni tekshirish va ro'yxatga olish
+            # Super adminlarni tekshirish va ro'yxatga olish
+            all_super_ids = set(SUPER_ADMIN_IDS)
             if SUPER_ADMIN_ID:
-                await db.execute(
-                    "INSERT OR IGNORE INTO admins (user_id, role, added_by) VALUES (?, 'super_admin', 0)",
-                    (SUPER_ADMIN_ID,)
-                )
-                await db.execute("""
-                    INSERT INTO users (id, first_name, role)
-                    VALUES (?, 'Super Admin', 'super_admin')
-                    ON CONFLICT(id) DO UPDATE SET role = 'super_admin'
-                """, (SUPER_ADMIN_ID,))
+                all_super_ids.add(SUPER_ADMIN_ID)
+
+            for s_id in all_super_ids:
+                if s_id:
+                    await db.execute(
+                        "INSERT OR IGNORE INTO admins (user_id, role, added_by) VALUES (?, 'super_admin', 0)",
+                        (s_id,)
+                    )
+                    await db.execute("""
+                        INSERT INTO users (id, first_name, role)
+                        VALUES (?, 'Super Admin', 'super_admin')
+                        ON CONFLICT(id) DO UPDATE SET role = 'super_admin'
+                    """, (s_id,))
 
             await db.commit()
             logger.info("✅ Professional ma'lumotlar bazasi jadvallari va indekslari tayyorlandi.")
@@ -663,16 +668,22 @@ class Database:
                 return row[0] if row else None
 
     async def is_super_admin(self, user_id: int) -> bool:
+        if user_id in SUPER_ADMIN_IDS or (SUPER_ADMIN_ID and user_id == SUPER_ADMIN_ID):
+            return True
         super_id = await self.get_super_admin_id()
         return super_id == user_id
 
     async def is_admin(self, user_id: int) -> bool:
-        if SUPER_ADMIN_ID and user_id == SUPER_ADMIN_ID:
+        if user_id in SUPER_ADMIN_IDS or (SUPER_ADMIN_ID and user_id == SUPER_ADMIN_ID):
             return True
         async with self._connect() as db:
             async with db.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,)) as cursor:
-                row = await cursor.fetchone()
-                return bool(row)
+                if await cursor.fetchone():
+                    return True
+            async with db.execute("SELECT 1 FROM users WHERE id = ? AND role IN ('admin', 'super_admin', 'moderator', 'operator')", (user_id,)) as cursor:
+                if await cursor.fetchone():
+                    return True
+        return False
 
     async def get_user_role(self, user_id: int) -> str:
         u = await self.get_user(user_id)
@@ -707,6 +718,9 @@ class Database:
             async with db.execute("SELECT user_id FROM admins") as cursor:
                 rows = await cursor.fetchall()
                 admins = [r[0] for r in rows]
+                for s_id in SUPER_ADMIN_IDS:
+                    if s_id and s_id not in admins:
+                        admins.append(s_id)
                 if SUPER_ADMIN_ID and SUPER_ADMIN_ID not in admins:
                     admins.append(SUPER_ADMIN_ID)
                 return admins

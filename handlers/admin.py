@@ -1,7 +1,9 @@
+import html
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, BufferedInputFile
+from aiogram.types import Message, CallbackQuery, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from config import SUPER_ADMIN_IDS
 from database import db
 from keyboards import get_admin_keyboard, get_cancel_keyboard, get_main_keyboard
 from utils.states import BlockUserState, UnblockUserState, GrantPremiumState
@@ -15,8 +17,31 @@ async def admin_check(user_id: int) -> bool:
 @router.message(F.text == "⚙️ Admin panel")
 async def cmd_admin(message: Message):
     """Admin boshqaruv panelini ochish"""
-    if not await admin_check(message.from_user.id):
-        await message.answer("⛔️ Kechirasiz, siz admin emassiz!")
+    user_id = message.from_user.id
+    if not await admin_check(user_id):
+        admins = await db.get_all_admins()
+        # Agar tizimda hali hech qanday admin bo'lmasa, birinchi foydalanuvchiga super admin bo'lish imkoniyati
+        if not admins and not SUPER_ADMIN_IDS:
+            markup = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="👑 Meni Bosh Admin (Super Admin) qilish", callback_data="admin:claim_super_admin")]
+            ])
+            await message.answer(
+                f"⚠️ <b>Tizimda hali birorta ham administrator belgilanmagan!</b>\n\n"
+                f"Siz ushbu botning ilk admini bo'lishingiz mumkin.\n"
+                f"🆔 <b>Sizning Telegram ID:</b> <code>{user_id}</code>\n\n"
+                f"Quyidagi tugmani bosing:",
+                parse_mode="HTML",
+                reply_markup=markup
+            )
+            return
+
+        await message.answer(
+            f"⛔️ <b>Kechirasiz, siz admin emassiz!</b>\n\n"
+            f"🆔 <b>Sizning Telegram ID raqamingiz:</b> <code>{user_id}</code>\n\n"
+            f"💡 <i>Admin boshqaruv huquqini olish uchun ushbu ID raqamni serverdagi <code>.env</code> faylida "
+            f"<code>SUPER_ADMIN_ID={user_id}</code> deb ko'rsating yoki mavjud administratorga murojaat qiling.</i>",
+            parse_mode="HTML"
+        )
         return
 
     text = (
@@ -24,6 +49,41 @@ async def cmd_admin(message: Message):
         "Quyidagi boshqaruv bo'limlaridan birini tanlang:"
     )
     await message.answer(text, parse_mode="HTML", reply_markup=get_admin_keyboard())
+
+@router.callback_query(F.data == "admin:claim_super_admin")
+async def cb_claim_super_admin(call: CallbackQuery):
+    admins = await db.get_all_admins()
+    if admins:
+        await call.answer("❌ Tizimda adminlar allaqachon mavjud!", show_alert=True)
+        return
+
+    user_id = call.from_user.id
+    await db.add_admin(user_id, role="super_admin", added_by=0)
+    await call.answer("🎉 Siz muvaffaqiyatli Super Admin etib tayinlandingiz!", show_alert=True)
+    await call.message.edit_text(
+        f"👑 <b>Tabriklaymiz! Siz tizimning Bosh Admini (Super Admin) etib tayinlandingiz!</b>\n"
+        f"🆔 Telegram ID: <code>{user_id}</code>\n\n"
+        f"Quyidagi menyudan boshqaruvni boshlashingiz mumkin:",
+        parse_mode="HTML",
+        reply_markup=get_admin_keyboard()
+    )
+    await call.message.answer("Asosiy menyu yangilandi:", reply_markup=get_main_keyboard(True))
+
+@router.callback_query(F.data == "admin:miniapp_info")
+async def cb_miniapp_info(call: CallbackQuery):
+    text = (
+        "📱 <b>Admin Mini App haqida yo'riqnoma:</b>\n\n"
+        "Telegram rasmiy xavfsizlik qoidalariga ko'ra, Telegram Web App (Mini App) faqat "
+        "<b>HTTPS</b> xavfsiz protokoli orqali ishlaydi (HTTP havolalar Telegram ichida ochilmaydi).\n\n"
+        "Mini Appni Telegram ichida ochish uchun:\n"
+        "1️⃣ Serveringizga SSL sertifikat o'rnating yoki <code>ngrok / cloudflare tunnel</code> orqali HTTPS havola oling.\n"
+        "2️⃣ <code>.env</code> faylida <code>WEBAPP_URL=https://sizning-saytingiz.com</code> ko'rinishida yozing.\n"
+        "3️⃣ Botni qayta ishga tushiring.\n\n"
+        "💡 <i>Hozircha barcha boshqaruv amallarini (kinolar, qismlar, kanallar, statistika, to'lovlar) "
+        "ushbu Admin Paneldagi tugmalar orqali 100% to'liq bajara olasiz!</i>"
+    )
+    await call.message.answer(text, parse_mode="HTML")
+    await call.answer()
 
 # ==================== STATISTIKA (/stats, /monthly) ====================
 
@@ -101,8 +161,8 @@ async def cmd_users_list(event: Message | CallbackQuery):
     for u in users:
         prem = "⭐" if u["is_premium"] else "👤"
         block = " [🚫 Bloklangan]" if u["is_blocked"] else ""
-        name = u["first_name"] or "NoName"
-        username = f"@{u['username']}" if u["username"] else "mavjud emas"
+        name = html.escape(u["first_name"] or "NoName")
+        username = f"@{html.escape(u['username'])}" if u["username"] else "mavjud emas"
         text += f"{prem} <code>{u['id']}</code> | {name} ({username}){block}\n"
 
     target_msg = event if isinstance(event, Message) else event.message

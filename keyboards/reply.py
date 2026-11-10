@@ -13,10 +13,11 @@ def get_main_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
         [KeyboardButton(text="👤 Profil"), KeyboardButton(text="⚙️ Sozlamalar")],
     ]
     if is_admin:
-        buttons.append([
-            KeyboardButton(text="📱 Admin Mini App", web_app=WebAppInfo(url=WEBAPP_URL)),
-            KeyboardButton(text="💎 Premium sozlamalari")
-        ])
+        admin_row = []
+        if WEBAPP_URL and WEBAPP_URL.startswith("https://"):
+            admin_row.append(KeyboardButton(text="📱 Admin Mini App", web_app=WebAppInfo(url=WEBAPP_URL)))
+        admin_row.append(KeyboardButton(text="💎 Premium sozlamalari"))
+        buttons.append(admin_row)
         buttons.append([
             KeyboardButton(text="⚙️ Admin panel")
         ])

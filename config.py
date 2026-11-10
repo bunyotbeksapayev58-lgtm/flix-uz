@@ -7,7 +7,16 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 BOT_TOKEN: str = os.getenv("BOT_TOKEN", "").strip()
-SUPER_ADMIN_ID: int = int(os.getenv("SUPER_ADMIN_ID", "0"))
+raw_super_admin = os.getenv("SUPER_ADMIN_ID", "0").strip()
+SUPER_ADMIN_IDS: list[int] = []
+for part in raw_super_admin.replace(";", ",").split(","):
+    part = part.strip()
+    if part.isdigit():
+        val = int(part)
+        if val > 0:
+            SUPER_ADMIN_IDS.append(val)
+
+SUPER_ADMIN_ID: int = SUPER_ADMIN_IDS[0] if SUPER_ADMIN_IDS else 0
 SUPPORT_USERNAME: str = os.getenv("SUPPORT_USERNAME", "@admin_support").strip()
 
 CHANNELS_RAW = os.getenv("CHANNELS_TO_CHECK", "").strip()

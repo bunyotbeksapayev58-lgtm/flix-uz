@@ -1,3 +1,4 @@
+import html
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
@@ -17,7 +18,12 @@ class PromoState(StatesGroup):
 async def cmd_profile(message: Message):
     user = await db.get_user(message.from_user.id)
     if not user:
-        return
+        user = await db.add_or_update_user(
+            user_id=message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            last_name=message.from_user.last_name
+        )
 
     lang = user.get("language", "uz")
     bot_info = await message.bot.get_me()
@@ -28,8 +34,8 @@ async def cmd_profile(message: Message):
     text = get_text(
         "profile", lang,
         user_id=user["id"],
-        name=user["first_name"] or "Foydalanuvchi",
-        username=user["username"] or "yo'q",
+        name=html.escape(user["first_name"] or "Foydalanuvchi"),
+        username=html.escape(user["username"] or "yo'q"),
         status=status,
         premium_until=prem_until,
         ref_count=user.get("referral_count", 0),

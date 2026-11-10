@@ -625,11 +625,59 @@ async def process_batch_incoming_file(message: Message, state: FSMContext):
             _delayed_batch_summary(message.bot, session["chat_id"], user_id)
         )
 
-@router.message(BatchUploadState.uploading, F.text)
+@router.message(BatchUploadState.uploading, F.text == "✅ Yuklashni yakunlash")
+@router.callback_query(F.data == "batch_finish")
+async def finish_batch_upload(event: Message | CallbackQuery, state: FSMContext):
+    """Ommaviy yuklashni yakunlash va to'liq hisobot berish"""
+    user_id = event.from_user.id
+    data = await state.get_data()
+    await state.clear()
+
+    # Session tozalash va timer bekor qilish
+    session = _batch_sessions.pop(user_id, None)
+    if session and session.get("timer_task") and not session["timer_task"].done():
+        session["timer_task"].cancel()
+
+    media_code = data.get("media_code") or (session.get("media_code") if session else "")
+    title = data.get("title") or (session.get("title") if session else "")
+    count = data.get("uploaded_count", 0)
+    if session and session.get("total_received", 0) > count:
+        count = session["total_received"]
+    free_up_to = data.get("free_up_to", 0)
+    if session and "free_up_to" in session:
+        free_up_to = session["free_up_to"]
+
+    ep_list = session.get("episodes_added", []) if session else []
+    if ep_list:
+        min_ep = min(ep_list)
+        max_ep = max(ep_list)
+        range_str = f"({min_ep} dan {max_ep}-qismgacha)"
+    else:
+        range_str = ""
+
+    summary = (
+        "🎉 <b>Ommaviy qismlar yuklash muvaffaqiyatli yakunlandi!</b>\n\n"
+        f"🎬 <b>Serial:</b> {title} [<code>{media_code}</code>]\n"
+        f"📥 <b>Jami saqlangan qismlar:</b> {count} ta {range_str}\n"
+    )
+    if free_up_to > 0:
+        summary += f"🆓 <b>Bepul qismlar:</b> 1 — {free_up_to}-qismlar\n⭐ <b>Pullik qismlar:</b> {free_up_to + 1} va undan keyingilari\n"
+    else:
+        summary += "🆓 <b>Barcha qismlar:</b> Bepul\n"
+
+    summary += "\nEndi foydalanuvchilar ushbu qismlarni tomosha qilishlari mumkin! 🍿"
+
+    if isinstance(event, Message):
+        await event.answer(summary, parse_mode="HTML", reply_markup=get_main_keyboard(True))
+    else:
+        await event.message.answer(summary, parse_mode="HTML", reply_markup=get_main_keyboard(True))
+        await event.answer("✅ Yakunlandi!")
+
+@router.message(BatchUploadState.uploading, F.text & ~F.text.in_({"✅ Yuklashni yakunlash", "❌ Bekor qilish", "/cancel", "/batchupload"}))
 async def process_batch_text_list(message: Message, state: FSMContext):
     """Admin ommaviy File ID lar ro'yxatini matn sifatida tashlaganda qabul qilish"""
     text = (message.text or "").strip()
-    if text in ["✅ Yuklashni yakunlash", "Bekor qilish", "/cancel", "/batchupload"]:
+    if text in ["✅ Yuklashni yakunlash", "❌ Bekor qilish", "Bekor qilish", "/cancel", "/batchupload"]:
         return
 
     user_id = message.from_user.id
@@ -688,50 +736,7 @@ async def process_batch_text_list(message: Message, state: FSMContext):
         reply_markup=finish_kb
     )
 
-@router.message(BatchUploadState.uploading, F.text == "✅ Yuklashni yakunlash")
-@router.callback_query(F.data == "batch_finish")
-async def finish_batch_upload(event: Message | CallbackQuery, state: FSMContext):
-    """Ommaviy yuklashni yakunlash va to'liq hisobot berish"""
-    user_id = event.from_user.id
-    data = await state.get_data()
-    await state.clear()
 
-    # Session tozalash va timer bekor qilish
-    session = _batch_sessions.pop(user_id, None)
-    if session and session.get("timer_task") and not session["timer_task"].done():
-        session["timer_task"].cancel()
-
-    media_code = data.get("media_code") or (session.get("media_code") if session else "")
-    title = data.get("title") or (session.get("title") if session else "")
-    count = data.get("uploaded_count", 0)
-    if session and session.get("total_received", 0) > count:
-        count = session["total_received"]
-    free_up_to = data.get("free_up_to", 0)
-    if session and "free_up_to" in session:
-        free_up_to = session["free_up_to"]
-
-    ep_list = session.get("episodes_added", []) if session else []
-    if ep_list:
-        min_ep = min(ep_list)
-        max_ep = max(ep_list)
-        range_str = f"({min_ep} dan {max_ep}-qismgacha)"
-    else:
-        range_str = ""
-
-    summary = (
-        "🎉 <b>Ommaviy qismlar yuklash muvaffaqiyatli yakunlandi!</b>\n\n"
-        f"🎬 <b>Serial:</b> {title} [<code>{media_code}</code>]\n"
-        f"📥 <b>Jami saqlangan qismlar:</b> {count} ta {range_str}\n"
-    )
-    if free_up_to > 0:
-        summary += f"🆓 <b>Bepul qismlar:</b> 1 — {free_up_to}-qismlar\n⭐ <b>Pullik qismlar:</b> {free_up_to + 1} va undan keyingilari\n"
-    else:
-        summary += "🆓 <b>Barcha qismlar:</b> Bepul\n"
-
-    target = event if isinstance(event, Message) else event.message
-    await target.answer(summary, parse_mode="HTML", reply_markup=get_main_keyboard(True))
-    if isinstance(event, CallbackQuery):
-        await event.answer()
 
 # ==================== QISMLAR NARXINI SOZLASH (/epaccess) ====================
 
@@ -1100,7 +1105,9 @@ async def show_medialist(event: Message | CallbackQuery):
         text = f"📋 <b>Medialar ro‘yxati:</b> (Jami: {total} ta)\n\n"
         for idx, m in enumerate(items, 1):
             access = "⭐ Premium" if m["is_premium"] else "🆓 Bepul"
-            text += f"{idx}. <b>{m['title']}</b> | Kod: <code>{m['code']}</code> | {access} | 👁 {m['views_count']}\n"
+            safe_title = html.escape(m["title"])
+            safe_code = html.escape(m["code"])
+            text += f"{idx}. <b>{safe_title}</b> | Kod: <code>{safe_code}</code> | {access} | 👁 {m['views_count']}\n"
 
     target = event if isinstance(event, Message) else event.message
     await target.answer(text, parse_mode="HTML")

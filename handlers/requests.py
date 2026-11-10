@@ -1,3 +1,4 @@
+import html
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
@@ -67,8 +68,9 @@ async def show_movie_requests(event: Message | CallbackQuery):
     text = f"💡 <b>Foydalanuvchilardan tushgan buyurtmalar:</b> ({len(requests)} ta)\n\n"
     buttons = []
     for r in requests:
-        user_name = r.get("first_name") or f"ID: {r['user_id']}"
-        text += f"🔹 <b>#{r['id']}</b>: «<b>{r['movie_title']}</b>» (Yuboruvchi: {user_name})\n"
+        user_name = html.escape(r.get("first_name") or f"ID: {r['user_id']}")
+        movie_title = html.escape(r['movie_title'])
+        text += f"🔹 <b>#{r['id']}</b>: «<b>{movie_title}</b>» (Yuboruvchi: {user_name})\n"
         buttons.append([
             InlineKeyboardButton(text=f"✅ #{r['id']} Yuklandi deb belgilash", callback_data=f"req_done:{r['id']}")
         ])

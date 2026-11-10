@@ -184,7 +184,10 @@ async def cb_noop(call: CallbackQuery):
 @router.callback_query(F.data == "cat:back")
 async def cb_category_back(call: CallbackQuery):
     if call.message.photo:
-        await call.message.delete()
+        try:
+            await call.message.delete()
+        except Exception:
+            pass
         await call.message.answer(
             "🎬 <b>Quyidagi toifalardan birini tanlang:</b>",
             parse_mode="HTML",
@@ -476,9 +479,7 @@ async def cb_download_episode(call: CallbackQuery):
     """Serial yoki anime qismini foydalanuvchiga yuborish va navigatsiya tugmalarini ko'rsatish"""
     ep_id = int(call.data.split(":")[1])
     
-    import aiosqlite
-    async with aiosqlite.connect(db.db_path) as conn:
-        conn.row_factory = aiosqlite.Row
+    async with db._connect() as conn:
         async with conn.execute("SELECT * FROM episodes WHERE id = ?", (ep_id,)) as cur:
             row = await cur.fetchone()
             ep = dict(row) if row else None
@@ -689,9 +690,11 @@ async def auto_code_lookup(message: Message):
         "🔍 Film qidirish", "🔢 Kod orqali topish",
         "🔥 Mashhur filmlar", "🆕 Yangi qo‘shilganlar",
         "❤️ Sevimlilar", "📚 Mening tarixim",
-        "💡 Film so‘rash", "⭐ Premium",
+        "💡 Film so‘rash", "💡 Film buyurtma qilish", "⭐ Premium",
         "👤 Profil", "⚙️ Sozlamalar",
-        "📱 Admin Mini App", "⚙️ Admin panel", "❌ Bekor qilish"
+        "📱 Admin Mini App", "💎 Premium sozlamalari", "⚙️ Admin panel",
+        "❌ Bekor qilish", "Bekor qilish", "ℹ️ Yordam", "🎬 Kino va seriallar",
+        "💬 Yordam / Murojaat", "✅ Yuklashni yakunlash"
     ]
     if text in reserved:
         return

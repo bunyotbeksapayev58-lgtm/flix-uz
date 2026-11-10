@@ -1,3 +1,4 @@
+import html
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
@@ -44,10 +45,14 @@ async def process_ticket_message(message: Message, state: FSMContext):
     ticket = await db.create_support_ticket(message.from_user.id, subject, text)
     is_admin = await db.is_admin(message.from_user.id)
 
+    safe_subject = html.escape(subject)
+    safe_text = html.escape(text)
+    safe_sender = html.escape(message.from_user.full_name or "Foydalanuvchi")
+
     await message.answer(
         f"✅ <b>Murojaatingiz qabul qilindi!</b>\n\n"
         f"🎫 Murojaat raqami: <code>#{ticket['ticket_number']}</code>\n"
-        f"📌 Mavzu: <b>{subject}</b>\n\n"
+        f"📌 Mavzu: <b>{safe_subject}</b>\n\n"
         f"Operatorlarimiz tez orada siz bilan bog'lanishadi.",
         parse_mode="HTML",
         reply_markup=get_main_keyboard(is_admin)
@@ -58,9 +63,9 @@ async def process_ticket_message(message: Message, state: FSMContext):
     alert_text = (
         f"📩 <b>Yangi Support Murojaati!</b>\n\n"
         f"🎫 <b>#{ticket['ticket_number']}</b>\n"
-        f"👤 Kimdan: <b>{message.from_user.full_name}</b> (<code>{message.from_user.id}</code>)\n"
-        f"📌 Mavzu: <b>{subject}</b>\n\n"
-        f"💬 Xabar:\n<i>{text}</i>"
+        f"👤 Kimdan: <b>{safe_sender}</b> (<code>{message.from_user.id}</code>)\n"
+        f"📌 Mavzu: <b>{safe_subject}</b>\n\n"
+        f"💬 Xabar:\n<i>{safe_text}</i>"
     )
     markup = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="✉️ Javob berish", callback_data=f"reply_ticket:{ticket['id']}:{message.from_user.id}")
@@ -111,9 +116,10 @@ async def process_operator_reply(message: Message, state: FSMContext):
 
     # Foydalanuvchiga yuborish
     try:
+        safe_reply = html.escape(reply_text)
         await message.bot.send_message(
             target_user_id,
-            f"📩 <b>Operator javobi:</b>\n\n<i>{reply_text}</i>\n\n"
+            f"📩 <b>Operator javobi:</b>\n\n<i>{safe_reply}</i>\n\n"
             f"Agar qo'shimcha savollaringiz bo'lsa, yana /support orqali murojaat qilishingiz mumkin.",
             parse_mode="HTML"
         )
