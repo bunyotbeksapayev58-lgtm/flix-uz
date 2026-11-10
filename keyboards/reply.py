@@ -15,6 +15,9 @@ def get_main_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
     if is_admin:
         buttons.append([
             KeyboardButton(text="📱 Admin Mini App", web_app=WebAppInfo(url=WEBAPP_URL)),
+            KeyboardButton(text="💎 Premium sozlamalari")
+        ])
+        buttons.append([
             KeyboardButton(text="⚙️ Admin panel")
         ])
 

@@ -2,6 +2,7 @@ import os
 import re
 import json
 import asyncio
+from typing import Optional
 from pathlib import Path
 from aiohttp import web
 from aiogram import Bot
@@ -86,18 +87,24 @@ class AdminWebApp:
             }
         )
 
-    async def check_admin_header(self, request: web.Request) -> bool:
-        """So'rovdan initData-ni tekshiradi"""
-        init_data = request.headers.get("X-Telegram-Init-Data", "")
+    async def get_verified_user(self, request: web.Request) -> Optional[dict]:
+        """Sarlavhadan initData-ni olib, tekshirilgan foydalanuvchini qaytaradi"""
+        init_data = request.headers.get("X-Telegram-Init-Data", "").strip()
         if not init_data:
-            # So'rov parametrida ham tekshiramiz
-            init_data = request.query.get("initData", "")
-        
-        if not init_data:
-            return False
+            return None
+        return await verify_admin_access(init_data)
 
-        admin_user = await verify_admin_access(init_data)
-        return admin_user is not None
+    async def check_admin_header(self, request: web.Request) -> bool:
+        """So'rovdan faqat sarlavha (header) orqali adminlikni tekshiradi"""
+        user = await self.get_verified_user(request)
+        return user is not None
+
+    async def check_super_admin_header(self, request: web.Request) -> bool:
+        """Faqat Super Admin huquqini tekshiradi"""
+        user = await self.get_verified_user(request)
+        if not user:
+            return False
+        return await db.is_super_admin(int(user["id"]))
 
     async def handle_index(self, request: web.Request) -> web.Response:
         index_file = STATIC_DIR / "index.html"
@@ -153,13 +160,17 @@ class AdminWebApp:
 
         category = request.query.get("category", "").lower().strip()
         search = request.query.get("search", "").strip()
-        page = max(1, int(request.query.get("page", 1)))
-        limit = min(50, max(5, int(request.query.get("limit", 15))))
+        try:
+            page = max(1, int(request.query.get("page", 1)))
+            limit = min(50, max(5, int(request.query.get("limit", 15))))
+        except (ValueError, TypeError):
+            return json_response({"ok": False, "error": "Noto'g'ri page yoki limit parametri"}, 400)
+
         offset = (page - 1) * limit
 
         if search:
-            items = await db.search_media(search, limit=limit)
-            total = len(items)
+            items = await db.search_media(search, limit=limit, offset=offset)
+            total = await db.count_search_media(search)
         elif category and category in ["kino", "serial", "anime", "drama"]:
             items = await db.get_media_by_category(category, limit=limit, offset=offset)
             total = await db.count_media_by_category(category)
@@ -524,8 +535,8 @@ class AdminWebApp:
         return json_response({"ok": True, "admins": admin_data})
 
     async def api_add_admin(self, request: web.Request) -> web.Response:
-        if not await self.check_admin_header(request):
-            return json_response({"ok": False, "error": "Ruxsat berilmadi"}, 403)
+        if not await self.check_super_admin_header(request):
+            return json_response({"ok": False, "error": "⛔️ Faqat Super Admin yangi admin tayinlashi mumkin!"}, 403)
 
         try:
             data = await request.json()
@@ -557,10 +568,14 @@ class AdminWebApp:
         return json_response({"ok": False, "error": "Bu foydalanuvchi allaqachon admin"}, 400)
 
     async def api_delete_admin(self, request: web.Request) -> web.Response:
-        if not await self.check_admin_header(request):
-            return json_response({"ok": False, "error": "Ruxsat berilmadi"}, 403)
+        if not await self.check_super_admin_header(request):
+            return json_response({"ok": False, "error": "⛔️ Faqat Super Admin adminni o'chira oladi!"}, 403)
 
-        target_id = int(request.match_info["id"])
+        try:
+            target_id = int(request.match_info["id"])
+        except (ValueError, KeyError):
+            return json_response({"ok": False, "error": "Noto'g'ri ID parametri"}, 400)
+
         super_id = await db.get_super_admin_id()
         if target_id == super_id:
             return json_response({"ok": False, "error": "Bosh adminni o'chirib bo'lmaydi!"}, 400)
@@ -589,16 +604,40 @@ class AdminWebApp:
         sent = 0
         failed = 0
 
+        user = await self.get_verified_user(request)
+        admin_id = int(user["id"]) if user else 0
+
         # Orqa fonda xabar jo'natish
         async def run_broadcast():
             nonlocal sent, failed
+            from aiogram.exceptions import TelegramRetryAfter
             for uid in user_ids:
                 try:
                     await self.bot.send_message(uid, text, parse_mode="HTML")
                     sent += 1
+                except TelegramRetryAfter as e:
+                    await asyncio.sleep(e.retry_after)
+                    try:
+                        await self.bot.send_message(uid, text, parse_mode="HTML")
+                        sent += 1
+                    except Exception:
+                        failed += 1
                 except Exception:
                     failed += 1
                 await asyncio.sleep(0.05) # Telegram spam protection
+
+            if admin_id:
+                try:
+                    await self.bot.send_message(
+                        admin_id,
+                        f"📊 <b>Xabar tarqatish yakunlandi!</b>\n\n"
+                        f"👥 Jami qamrov: {total} ta\n"
+                        f"✅ Muvaffaqiyatli: {sent} ta\n"
+                        f"❌ Yetib bormadi: {failed} ta",
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
 
         asyncio.create_task(run_broadcast())
 

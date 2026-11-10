@@ -69,3 +69,13 @@ class MovieRequestState(StatesGroup):
 class ChannelPostState(StatesGroup):
     channel_id = State()
 
+class PremiumSettingsState(StatesGroup):
+    edit_uzs_1m = State()
+    edit_uzs_3m = State()
+    edit_uzs_1y = State()
+    edit_stars_1m = State()
+    edit_stars_3m = State()
+    edit_stars_1y = State()
+    edit_payment_admin = State()
+    edit_card_details = State()
+

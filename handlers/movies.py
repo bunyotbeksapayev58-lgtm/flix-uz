@@ -367,8 +367,9 @@ async def show_popular_movies(message: Message):
     for idx, m in enumerate(popular):
         rank = medals[idx] if idx < len(medals) else f"{idx+1}."
         badge = "⭐ " if m["is_premium"] else "🆓 "
-        text += f"{rank} {badge}<b>{m['title']}</b> ({m.get('year') or '—'}) — Kod: <code>{m['code']}</code> (👁 {m['views_count']})\n"
-        buttons.append([InlineKeyboardButton(text=f"{rank} {m['title']}", callback_data=f"view:{m['code']}")])
+        safe_title = html.escape(m['title'])
+        text += f"{rank} {badge}<b>{safe_title}</b> ({html.escape(str(m.get('year') or '—'))}) — Kod: <code>{html.escape(m['code'])}</code> (👁 {m['views_count']})\n"
+        buttons.append([InlineKeyboardButton(text=f"{rank} {m['title'][:30]}", callback_data=f"view:{m['code']}")])
 
     text += "\n👇 Kerakli filmni ko‘rish uchun tugmani bosing yoki kodini yuboring!"
     markup = InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -386,8 +387,9 @@ async def show_recent_movies(message: Message):
     buttons = []
     for idx, m in enumerate(recent, 1):
         badge = "⭐ " if m["is_premium"] else "🆓 "
-        text += f"{idx}. {badge}<b>{m['title']}</b> ({m.get('year') or '—'}) — Kod: <code>{m['code']}</code>\n"
-        buttons.append([InlineKeyboardButton(text=f"🆕 {m['title']}", callback_data=f"view:{m['code']}")])
+        safe_title = html.escape(m['title'])
+        text += f"{idx}. {badge}<b>{safe_title}</b> ({html.escape(str(m.get('year') or '—'))}) — Kod: <code>{html.escape(m['code'])}</code>\n"
+        buttons.append([InlineKeyboardButton(text=f"🆕 {m['title'][:30]}", callback_data=f"view:{m['code']}")])
 
     text += "\n👇 Kerakli filmni tanlang yoki kodini yozib yuboring:"
     markup = InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -464,7 +466,9 @@ async def cb_download_media(call: CallbackQuery):
         await status_msg.delete()
         await call.answer("✅ Film yuborildi!")
     except Exception as e:
-        await status_msg.edit_text(f"❌ Faylni yuborishda xatolik yuz berdi: {e}")
+        import logging
+        logging.getLogger(__name__).error(f"Fayl yuborishda xatolik: {e}")
+        await status_msg.edit_text("❌ Faylni yuborishda texnik xatolik yuz berdi. Iltimos, birozdan so‘ng qayta urinib ko‘ring.")
         await call.answer()
 
 @router.callback_query(F.data.startswith("ep_dl:"))
@@ -560,7 +564,9 @@ async def cb_download_episode(call: CallbackQuery):
         await status_msg.delete()
         await call.answer("✅ Qism yuborildi!")
     except Exception as e:
-        await status_msg.edit_text(f"❌ Faylni yuborishda xatolik: {e}")
+        import logging
+        logging.getLogger(__name__).error(f"Qism yuborishda xatolik: {e}")
+        await status_msg.edit_text("❌ Qismni yuborishda texnik xatolik yuz berdi. Iltimos, birozdan so‘ng qayta urinib ko‘ring.")
         await call.answer()
 
 @router.callback_query(F.data == "check_sub_status")

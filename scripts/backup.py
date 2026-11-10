@@ -15,11 +15,12 @@ if sys.stdout.encoding != 'utf-8':
     except Exception:
         pass
 
+from contextlib import closing
 from config import DB_PATH
 import aiosqlite
 
 def _sqlite_backup(src_path: str, dst_path: Path):
-    with sqlite3.connect(src_path) as src, sqlite3.connect(str(dst_path)) as dst:
+    with closing(sqlite3.connect(src_path)) as src, closing(sqlite3.connect(str(dst_path))) as dst:
         src.backup(dst)
 
 async def run_backup():

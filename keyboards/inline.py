@@ -174,6 +174,9 @@ def get_admin_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="⭐ Premium berish", callback_data="admin:grant_premium"),
         ],
         [
+            InlineKeyboardButton(text="💎 Premium narx & To'lov admini", callback_data="admin:premium_settings"),
+        ],
+        [
             InlineKeyboardButton(text="👥 Foydalanuvchilar", callback_data="admin:users"),
             InlineKeyboardButton(text="📊 Umumiy statistika", callback_data="admin:stats"),
         ],
@@ -223,19 +226,24 @@ def get_media_access_choice_keyboard() -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-def get_premium_plans_keyboard() -> InlineKeyboardMarkup:
-    """Premium tariflar tugmalari (Telegram Stars va Karta orqali)"""
-    support_url = f"https://t.me/{SUPPORT_USERNAME.lstrip('@')}"
+def get_premium_plans_keyboard(
+    p_1m_uzs: str = "15 000",
+    p_3m_uzs: str = "40 000",
+    p_1y_uzs: str = "120 000",
+    p_1m_stars: str = "75",
+    p_3m_stars: str = "199",
+    p_1y_stars: str = "599"
+) -> InlineKeyboardMarkup:
+    """Premium tariflar tugmalari (Dinamik narxlar bilan)"""
     buttons = [
         [
-            InlineKeyboardButton(text="⭐ 1 Oylik — 75 Stars", callback_data="buy_stars:1_month"),
-            InlineKeyboardButton(text="⭐ 3 Oylik — 199 Stars", callback_data="buy_stars:3_months")
+            InlineKeyboardButton(text=f"⭐ 1 Oylik — {p_1m_uzs} so'm / {p_1m_stars} ⭐", callback_data="plan_choice:1_month"),
         ],
         [
-            InlineKeyboardButton(text="👑 1 Yillik VIP — 599 Stars", callback_data="buy_stars:1_year")
+            InlineKeyboardButton(text=f"⭐ 3 Oylik — {p_3m_uzs} so'm / {p_3m_stars} ⭐", callback_data="plan_choice:3_months"),
         ],
         [
-            InlineKeyboardButton(text="💳 Karta orqali sotib olish (Click / Payme)", url=support_url)
+            InlineKeyboardButton(text=f"👑 1 Yillik VIP — {p_1y_uzs} so'm / {p_1y_stars} ⭐", callback_data="plan_choice:1_year"),
         ],
         [
             InlineKeyboardButton(text="🔄 Holatimni tekshirish", callback_data="check_premium_status")

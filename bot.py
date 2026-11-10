@@ -65,6 +65,7 @@ async def set_default_commands(bot: Bot):
         BotCommand(command="requestmovie", description="Film buyurtma qilish / so'rash"),
         BotCommand(command="requests", description="Kino buyurtmalari (Admin)"),
         BotCommand(command="setpostchannel", description="Kanalga post sozlash (Admin)"),
+        BotCommand(command="premium_settings", description="Premium narxlari va to'lov admini (Admin)"),
     ]
     await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
 

@@ -19,6 +19,13 @@ class ThrottlingMiddleware(BaseMiddleware):
         if not user:
             return await handler(event, data)
 
+        # To'lov xabarlari (successful_payment, invoice) va pre_checkout hech qachon cheklanmaydi
+        from aiogram.types import PreCheckoutQuery
+        if isinstance(event, PreCheckoutQuery):
+            return await handler(event, data)
+        if isinstance(event, Message) and (event.successful_payment or event.invoice):
+            return await handler(event, data)
+
         # Adminlar uchun tezlik cheklovi (throttling) qo'llanmaydi
         if await db.is_admin(user.id):
             return await handler(event, data)

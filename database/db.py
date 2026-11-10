@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 import json
 import logging
 import random
@@ -12,6 +13,15 @@ logger = logging.getLogger(__name__)
 class Database:
     def __init__(self, db_path=DB_PATH):
         self.db_path = str(db_path)
+
+    @asynccontextmanager
+    async def _connect(self):
+        async with aiosqlite.connect(self.db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            await conn.execute("PRAGMA foreign_keys = ON;")
+            await conn.execute("PRAGMA journal_mode = WAL;")
+            await conn.execute("PRAGMA busy_timeout = 5000;")
+            yield conn
 
     async def init_db(self):
         """Barcha 15 ta jadval va indekslarni yaratish (Master Checklist talablari asosida)"""
@@ -361,6 +371,22 @@ class Database:
             for idx_query in indexes:
                 await db.execute(idx_query)
 
+            # Standart tizim konfiguratsiyalari (Premium narxlari va To'lov admini)
+            default_settings = [
+                ("premium_price_1m_uzs", "15 000"),
+                ("premium_price_3m_uzs", "40 000"),
+                ("premium_price_1y_uzs", "120 000"),
+                ("premium_price_1m_stars", "75"),
+                ("premium_price_3m_stars", "199"),
+                ("premium_price_1y_stars", "599"),
+                ("payment_admin_username", "admin"),
+                ("payment_admin_id", str(SUPER_ADMIN_ID or 0)),
+                ("payment_card_number", "8600 0000 0000 0000"),
+                ("payment_card_holder", "FlixUz Cinema"),
+            ]
+            for skey, sval in default_settings:
+                await db.execute("INSERT OR IGNORE INTO system_settings (key, value) VALUES (?, ?)", (skey, sval))
+
             # Super adminni tekshirish va ro'yxatga olish
             if SUPER_ADMIN_ID:
                 await db.execute(
@@ -388,7 +414,7 @@ class Database:
     ) -> Dict[str, Any]:
         """Foydalanuvchini ro'yxatga olish yoki oxirgi faolligini yangilash"""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("SELECT * FROM users WHERE id = ?", (user_id,)) as cur:
                 existing = await cur.fetchone()
@@ -457,7 +483,7 @@ class Database:
         return await self.get_user(user_id)
 
     async def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("SELECT * FROM users WHERE id = ?", (user_id,)) as cursor:
                 row = await cursor.fetchone()
@@ -465,14 +491,14 @@ class Database:
 
     async def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
         clean_un = username.lstrip("@").strip().lower()
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("SELECT * FROM users WHERE LOWER(username) = ?", (clean_un,)) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
 
     async def set_user_language(self, user_id: int, lang: str):
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             await db.execute("UPDATE users SET language = ? WHERE id = ?", (lang, user_id))
             await db.execute("UPDATE user_settings SET language = ? WHERE user_id = ?", (lang, user_id))
             await db.commit()
@@ -482,20 +508,20 @@ class Database:
         return u["language"] if u and u.get("language") else "uz"
 
     async def is_user_blocked(self, user_id: int) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             async with db.execute("SELECT is_blocked FROM users WHERE id = ?", (user_id,)) as cursor:
                 row = await cursor.fetchone()
                 return bool(row[0]) if row else False
 
     async def block_user(self, user_id: int) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             cur = await db.execute("UPDATE users SET is_blocked = 1 WHERE id = ?", (user_id,))
             await db.commit()
             await self.log_activity(user_id, "block", "Foydalanuvchi bloklandi")
             return cur.rowcount > 0
 
     async def unblock_user(self, user_id: int) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             cur = await db.execute("UPDATE users SET is_blocked = 0 WHERE id = ?", (user_id,))
             await db.commit()
             await self.log_activity(user_id, "unblock", "Foydalanuvchi blokdan chiqarildi")
@@ -526,6 +552,10 @@ class Database:
         now_dt = datetime.now(timezone.utc)
         base_dt = now_dt
         user = await self.get_user(user_id)
+        if not user:
+            await self.add_or_update_user(user_id=user_id, username="", first_name="Foydalanuvchi")
+            user = await self.get_user(user_id)
+
         if user and user.get("premium_until"):
             try:
                 current_until = datetime.strptime(user["premium_until"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
@@ -535,12 +565,19 @@ class Database:
                 pass
         expires = (base_dt + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
 
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             cur = await db.execute("""
                 UPDATE users 
                 SET is_premium = 1, premium_until = ?, subscription_tier = ?, reminder_sent = 0
                 WHERE id = ?
             """, (expires, tier, user_id))
+            if cur.rowcount == 0:
+                await db.execute("""
+                    INSERT INTO users (id, is_premium, premium_until, subscription_tier, reminder_sent)
+                    VALUES (?, 1, ?, ?, 0)
+                    ON CONFLICT(id) DO UPDATE SET is_premium = 1, premium_until = ?, subscription_tier = ?, reminder_sent = 0
+                """, (user_id, expires, tier, expires, tier))
+
             # Subscriptions jadvaliga qayd kiritish
             await db.execute("""
                 INSERT INTO subscriptions (user_id, plan_name, price, status, starts_at, expires_at)
@@ -551,7 +588,7 @@ class Database:
             return cur.rowcount > 0
 
     async def remove_user_premium(self, user_id: int) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             cur = await db.execute("""
                 UPDATE users 
                 SET is_premium = 0, premium_until = NULL, subscription_tier = 'free', reminder_sent = 0
@@ -563,7 +600,7 @@ class Database:
     async def redeem_promo_code(self, user_id: int, code_str: str) -> Dict[str, Any]:
         """Promokodni tekshirish va ishlatish (Atomik va bir martalik)"""
         code_str = code_str.strip().upper()
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
 
             # 1. Foydalanuvchi bu promokodni oldin ishlatganligini tekshirish
@@ -608,7 +645,7 @@ class Database:
     # ==================== RBAC & ADMINLAR BOSHQARUVI ====================
 
     async def get_admin_count(self) -> int:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             async with db.execute("SELECT COUNT(*) FROM admins") as cursor:
                 row = await cursor.fetchone()
                 return row[0] if row else 0
@@ -616,7 +653,7 @@ class Database:
     async def get_super_admin_id(self) -> Optional[int]:
         if SUPER_ADMIN_ID and SUPER_ADMIN_ID > 0:
             return SUPER_ADMIN_ID
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             async with db.execute("SELECT user_id FROM admins WHERE role = 'super_admin' ORDER BY created_at ASC LIMIT 1") as cursor:
                 row = await cursor.fetchone()
                 if row:
@@ -632,7 +669,7 @@ class Database:
     async def is_admin(self, user_id: int) -> bool:
         if SUPER_ADMIN_ID and user_id == SUPER_ADMIN_ID:
             return True
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             async with db.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,)) as cursor:
                 row = await cursor.fetchone()
                 return bool(row)
@@ -642,7 +679,7 @@ class Database:
         return u["role"] if u and u.get("role") else "user"
 
     async def add_admin(self, user_id: int, role: str = "admin", added_by: int = 0) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             try:
                 await db.execute(
                     "INSERT INTO admins (user_id, role, added_by) VALUES (?, ?, ?)",
@@ -659,14 +696,14 @@ class Database:
         super_id = await self.get_super_admin_id()
         if user_id == super_id:
             return False
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             cur = await db.execute("DELETE FROM admins WHERE user_id = ?", (user_id,))
             await db.execute("UPDATE users SET role = 'user' WHERE id = ?", (user_id,))
             await db.commit()
             return cur.rowcount > 0
 
     async def get_all_admins(self) -> List[int]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             async with db.execute("SELECT user_id FROM admins") as cursor:
                 rows = await cursor.fetchall()
                 admins = [r[0] for r in rows]
@@ -680,7 +717,7 @@ class Database:
         rnd_suffix = random.randint(1000, 9999)
         ticket_number = f"TICKET-{datetime.now(timezone.utc).strftime('%y%m%d%H%M%S')}-{rnd_suffix}"
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             cur = await db.execute("""
                 INSERT INTO support_tickets (ticket_number, user_id, subject, status, created_at, updated_at)
                 VALUES (?, ?, ?, 'open', ?, ?)
@@ -698,7 +735,7 @@ class Database:
 
     async def add_ticket_message(self, ticket_id: int, sender_id: int, text: str, is_from_admin: bool = False) -> bool:
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             await db.execute("""
                 INSERT INTO ticket_messages (ticket_id, sender_id, is_from_admin, text, created_at)
                 VALUES (?, ?, ?, ?, ?)
@@ -708,14 +745,14 @@ class Database:
             return True
 
     async def get_user_tickets(self, user_id: int) -> List[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("SELECT * FROM support_tickets WHERE user_id = ? ORDER BY id DESC", (user_id,)) as cur:
                 rows = await cur.fetchall()
                 return [dict(r) for r in rows]
 
     async def get_all_tickets(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             if status:
                 async with db.execute("SELECT * FROM support_tickets WHERE status = ? ORDER BY updated_at DESC", (status,)) as cur:
@@ -756,7 +793,7 @@ class Database:
         language: str = "O'zbekcha",
         age_rating: str = "12+"
     ) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             try:
                 await db.execute("""
                     INSERT INTO media (
@@ -780,31 +817,46 @@ class Database:
                 return False
 
     async def get_media_by_code(self, code: str) -> Optional[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("SELECT * FROM media WHERE LOWER(code) = LOWER(?)", (code.strip(),)) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
 
-    async def search_media(self, query: str, limit: int = 15) -> List[Dict[str, Any]]:
-        """Nom, original nom, kod yoki janr bo'yicha qidiruv"""
-        q = f"%{query.strip().lower()}%"
-        async with aiosqlite.connect(self.db_path) as db:
-            db.row_factory = aiosqlite.Row
+    async def search_media(self, query: str, limit: int = 15, offset: int = 0) -> List[Dict[str, Any]]:
+        """Nom, original nom, kod yoki janr bo'yicha qidiruv (maxsus belgilar escape qilingan)"""
+        clean_q = query.strip().lower().replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        q = f"%{clean_q}%"
+        async with self._connect() as db:
             async with db.execute("""
                 SELECT * FROM media 
-                WHERE LOWER(code) LIKE ? 
-                   OR LOWER(title) LIKE ? 
-                   OR LOWER(original_title) LIKE ?
-                   OR LOWER(genre) LIKE ?
-                ORDER BY views_count DESC, id DESC LIMIT ?
-            """, (q, q, q, q, limit)) as cursor:
+                WHERE LOWER(code) LIKE ? ESCAPE '\\'
+                   OR LOWER(title) LIKE ? ESCAPE '\\'
+                   OR LOWER(original_title) LIKE ? ESCAPE '\\'
+                   OR LOWER(genre) LIKE ? ESCAPE '\\'
+                ORDER BY views_count DESC, id DESC LIMIT ? OFFSET ?
+            """, (q, q, q, q, limit, offset)) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(r) for r in rows]
 
+    async def count_search_media(self, query: str) -> int:
+        """Qidiruv natijalari umumiy soni (pagination uchun)"""
+        clean_q = query.strip().lower().replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        q = f"%{clean_q}%"
+        async with self._connect() as db:
+            async with db.execute("""
+                SELECT COUNT(*) FROM media 
+                WHERE LOWER(code) LIKE ? ESCAPE '\\'
+                   OR LOWER(title) LIKE ? ESCAPE '\\'
+                   OR LOWER(original_title) LIKE ? ESCAPE '\\'
+                   OR LOWER(genre) LIKE ? ESCAPE '\\'
+            """, (q, q, q, q)) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else 0
+
     async def get_popular_media(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Eng mashhur filmlar (ko'rishlar soni bo'yicha)"""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("SELECT * FROM media ORDER BY views_count DESC LIMIT ?", (limit,)) as cur:
                 rows = await cur.fetchall()
@@ -812,7 +864,7 @@ class Database:
 
     async def get_recent_media(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Yangi qo'shilgan filmlar"""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("SELECT * FROM media ORDER BY id DESC LIMIT ?", (limit,)) as cur:
                 rows = await cur.fetchall()
@@ -820,7 +872,7 @@ class Database:
 
     async def get_random_media(self) -> Optional[Dict[str, Any]]:
         """Tasodifiy film"""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("SELECT * FROM media ORDER BY RANDOM() LIMIT 1") as cur:
                 row = await cur.fetchone()
@@ -829,7 +881,7 @@ class Database:
     # ==================== SEVIMLILAR VA TOMOSHA TARIXI ====================
 
     async def add_favorite(self, user_id: int, media_code: str) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             try:
                 await db.execute(
                     "INSERT OR IGNORE INTO favorites (user_id, media_code) VALUES (?, ?)",
@@ -841,7 +893,7 @@ class Database:
                 return False
 
     async def remove_favorite(self, user_id: int, media_code: str) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             cur = await db.execute(
                 "DELETE FROM favorites WHERE user_id = ? AND LOWER(media_code) = LOWER(?)",
                 (user_id, media_code.strip())
@@ -850,7 +902,7 @@ class Database:
             return cur.rowcount > 0
 
     async def is_favorite(self, user_id: int, media_code: str) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             async with db.execute(
                 "SELECT 1 FROM favorites WHERE user_id = ? AND LOWER(media_code) = LOWER(?)",
                 (user_id, media_code.strip())
@@ -859,7 +911,7 @@ class Database:
                 return bool(row)
 
     async def get_user_favorites(self, user_id: int, limit: int = 20) -> List[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("""
                 SELECT m.* FROM media m
@@ -872,7 +924,7 @@ class Database:
 
     async def record_watch_history(self, user_id: int, media_code: str):
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             await db.execute("""
                 INSERT INTO watch_history (user_id, media_code, watched_at)
                 VALUES (?, ?, ?)
@@ -880,7 +932,7 @@ class Database:
             await db.commit()
 
     async def get_user_history(self, user_id: int, limit: int = 15) -> List[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("""
                 SELECT m.*, w.watched_at FROM media m
@@ -892,7 +944,7 @@ class Database:
                 return [dict(r) for r in rows]
 
     async def get_next_episode(self, media_code: str, current_ep: int) -> Optional[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("""
                 SELECT * FROM episodes 
@@ -903,7 +955,7 @@ class Database:
                 return dict(row) if row else None
 
     async def get_prev_episode(self, media_code: str, current_ep: int) -> Optional[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("""
                 SELECT * FROM episodes 
@@ -914,7 +966,7 @@ class Database:
                 return dict(row) if row else None
 
     async def get_media_by_category(self, category: str, limit: int = 10, offset: int = 0) -> List[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("""
                 SELECT * FROM media 
@@ -925,7 +977,7 @@ class Database:
                 return [dict(r) for r in rows]
 
     async def count_media_by_category(self, category: str) -> int:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             async with db.execute(
                 "SELECT COUNT(*) FROM media WHERE LOWER(category) = LOWER(?)",
                 (category.strip(),)
@@ -934,7 +986,7 @@ class Database:
                 return row[0] if row else 0
 
     async def get_all_media(self, limit: int = 10, offset: int = 0) -> List[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
                 "SELECT * FROM media ORDER BY id DESC LIMIT ? OFFSET ?",
@@ -944,20 +996,20 @@ class Database:
                 return [dict(r) for r in rows]
 
     async def get_total_media_count(self) -> int:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             async with db.execute("SELECT COUNT(*) FROM media") as cursor:
                 row = await cursor.fetchone()
                 return row[0] if row else 0
 
     async def delete_media(self, code: str) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             cur = await db.execute("DELETE FROM media WHERE LOWER(code) = LOWER(?)", (code.strip(),))
             await db.execute("DELETE FROM episodes WHERE LOWER(media_code) = LOWER(?)", (code.strip(),))
             await db.commit()
             return cur.rowcount > 0
 
     async def update_media(self, code: str, title: str, genre: str, year: str, description: str, is_premium: int) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             cur = await db.execute("""
                 UPDATE media SET
                     title = ?, genre = ?, year = ?, description = ?, is_premium = ?
@@ -971,13 +1023,13 @@ class Database:
         if not media:
             return None
         new_val = 0 if media["is_premium"] else 1
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             await db.execute("UPDATE media SET is_premium = ? WHERE LOWER(code) = LOWER(?)", (new_val, code.strip()))
             await db.commit()
         return new_val
 
     async def increment_media_views(self, code: str):
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             await db.execute("UPDATE media SET views_count = views_count + 1 WHERE LOWER(code) = LOWER(?)", (code.strip(),))
             await db.commit()
 
@@ -991,7 +1043,7 @@ class Database:
         is_premium: int = 0,
         file_type: str = "video"
     ) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             # Agar oldin kiritilgan qism bo'lsa yangilaymiz
             async with db.execute(
                 "SELECT id FROM episodes WHERE LOWER(media_code) = LOWER(?) AND season_num = ? AND episode_num = ?",
@@ -1029,7 +1081,7 @@ class Database:
             return 0
 
         added = 0
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             for ep in episodes:
                 ep_num = int(ep.get("episode_num", 1))
                 season_num = int(ep.get("season_num", 1))
@@ -1070,7 +1122,7 @@ class Database:
         26-qismdan boshlab barcha qismlar pullik (is_premium = 1) bo'ladi.
         Agar 0 bo'lsa, barchasi bepul bo'ladi.
         """
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             if free_up_to_episode <= 0:
                 await db.execute(
                     "UPDATE episodes SET is_premium = 0 WHERE LOWER(media_code) = LOWER(?)",
@@ -1088,7 +1140,7 @@ class Database:
     # ==================== MAJBURIY OBUNA KANALLARI ====================
 
     async def add_required_channel(self, channel_id: str, channel_name: str = "", invite_link: str = "") -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             try:
                 await db.execute("""
                     INSERT INTO required_channels (channel_id, channel_name, invite_link)
@@ -1100,7 +1152,7 @@ class Database:
                 return False
 
     async def remove_required_channel(self, channel_identifier: str) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             cur = await db.execute("""
                 DELETE FROM required_channels 
                 WHERE LOWER(channel_id) = LOWER(?) OR CAST(id AS TEXT) = ?
@@ -1109,14 +1161,14 @@ class Database:
             return cur.rowcount > 0
 
     async def get_required_channels(self) -> List[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("SELECT * FROM required_channels ORDER BY id ASC") as cur:
                 rows = await cur.fetchall()
                 return [dict(r) for r in rows]
 
     async def get_episodes(self, media_code: str) -> List[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("""
                 SELECT * FROM episodes 
@@ -1127,7 +1179,7 @@ class Database:
                 return [dict(r) for r in rows]
 
     async def delete_episode(self, episode_id: int) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             cur = await db.execute("DELETE FROM episodes WHERE id = ?", (episode_id,))
             await db.commit()
             return cur.rowcount > 0
@@ -1136,7 +1188,7 @@ class Database:
 
     async def log_activity(self, user_id: int, action: str, details: str = ""):
         try:
-            async with aiosqlite.connect(self.db_path) as db:
+            async with self._connect() as db:
                 await db.execute("""
                     INSERT INTO activity_logs (user_id, action, details)
                     VALUES (?, ?, ?)
@@ -1147,7 +1199,7 @@ class Database:
 
     async def log_error(self, module: str, error_type: str, message: str, traceback_str: str = ""):
         try:
-            async with aiosqlite.connect(self.db_path) as db:
+            async with self._connect() as db:
                 await db.execute("""
                     INSERT INTO error_logs (module, error_type, message, traceback)
                     VALUES (?, ?, ?, ?)
@@ -1159,14 +1211,14 @@ class Database:
     # ==================== STATISTIKA & ANALYTICS ====================
 
     async def get_total_users_count(self) -> int:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             async with db.execute("SELECT COUNT(*) FROM users") as cursor:
                 row = await cursor.fetchone()
                 return row[0] if row else 0
 
     async def get_monthly_users_count(self) -> int:
         month_ago = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             async with db.execute(
                 "SELECT COUNT(*) FROM users WHERE last_active_at >= ? OR joined_at >= ?",
                 (month_ago, month_ago)
@@ -1176,20 +1228,20 @@ class Database:
 
     async def get_daily_active_users(self) -> int:
         day_ago = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             async with db.execute("SELECT COUNT(*) FROM users WHERE last_active_at >= ?", (day_ago,)) as cursor:
                 row = await cursor.fetchone()
                 return row[0] if row else 0
 
     async def get_users_list(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("SELECT * FROM users ORDER BY joined_at DESC LIMIT ? OFFSET ?", (limit, offset)) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(r) for r in rows]
 
     async def get_users_filtered(self, search: str = "", limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             if search:
                 q = f"%{search.strip().lower()}%"
@@ -1204,13 +1256,13 @@ class Database:
                 return await self.get_users_list(limit=limit, offset=offset)
 
     async def get_all_user_ids(self) -> List[int]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             async with db.execute("SELECT id FROM users WHERE is_blocked = 0") as cursor:
                 rows = await cursor.fetchall()
                 return [r[0] for r in rows]
 
     async def get_overall_stats(self) -> Dict[str, Any]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             async with db.execute("SELECT COUNT(*) FROM users") as cur:
                 total_users = (await cur.fetchone())[0]
 
@@ -1267,13 +1319,13 @@ class Database:
     # ==================== TIZIM SOZLAMALARI ====================
 
     async def get_setting(self, key: str, default: str = "") -> str:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             async with db.execute("SELECT value FROM system_settings WHERE key = ?", (key,)) as cur:
                 row = await cur.fetchone()
                 return row[0] if row else default
 
     async def set_setting(self, key: str, value: str) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             await db.execute("""
                 INSERT INTO system_settings (key, value) VALUES (?, ?)
                 ON CONFLICT(key) DO UPDATE SET value = ?
@@ -1284,7 +1336,7 @@ class Database:
     # ==================== KINO BUYURTMA QILISH / SO'ROVLAR ====================
 
     async def create_movie_request(self, user_id: int, movie_title: str) -> Dict[str, Any]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             cur = await db.execute("""
                 INSERT INTO movie_requests (user_id, movie_title, status)
                 VALUES (?, ?, 'pending')
@@ -1295,7 +1347,7 @@ class Database:
             return {"id": req_id, "user_id": user_id, "movie_title": movie_title, "status": "pending"}
 
     async def get_movie_requests(self, status: str = "pending", limit: int = 30) -> List[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             if status == "all":
                 query = "SELECT r.*, u.first_name, u.username FROM movie_requests r LEFT JOIN users u ON u.id = r.user_id ORDER BY r.id DESC LIMIT ?"
@@ -1309,7 +1361,7 @@ class Database:
                 return [dict(r) for r in rows]
 
     async def fulfill_movie_request(self, request_id: int) -> Optional[Dict[str, Any]]:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("SELECT * FROM movie_requests WHERE id = ?", (request_id,)) as cur:
                 req = await cur.fetchone()
@@ -1323,6 +1375,14 @@ class Database:
 
     # ==================== TO'LOVLARNI YOZIB BORISH ====================
 
+    async def is_transaction_processed(self, transaction_id: str) -> bool:
+        """To'lov tranzaksiyasi allaqachon qabul qilinganligini tekshirish (idempotency)"""
+        if not transaction_id:
+            return False
+        async with self._connect() as db:
+            async with db.execute("SELECT id FROM payments WHERE transaction_id = ?", (str(transaction_id).strip(),)) as cur:
+                return (await cur.fetchone()) is not None
+
     async def record_payment(
         self,
         user_id: int,
@@ -1332,13 +1392,18 @@ class Database:
         status: str = "completed",
         transaction_id: str = ""
     ) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("""
-                INSERT INTO payments (user_id, amount, currency, provider, status, transaction_id)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (user_id, str(amount), currency, provider, status, transaction_id or str(int(datetime.now(timezone.utc).timestamp()))))
-            await db.commit()
-            await self.log_activity(user_id, "payment_success", f"{amount} {currency} ({provider})")
-            return True
+        tx_id = transaction_id or str(int(datetime.now(timezone.utc).timestamp()))
+        async with self._connect() as db:
+            try:
+                await db.execute("""
+                    INSERT INTO payments (user_id, amount, currency, provider, status, transaction_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (user_id, str(amount), currency, provider, status, tx_id))
+                await db.commit()
+                await self.log_activity(user_id, "payment_success", f"{amount} {currency} ({provider})")
+                return True
+            except aiosqlite.IntegrityError:
+                # Tranzaksiya allaqachon mavjud
+                return False
 
 db = Database()

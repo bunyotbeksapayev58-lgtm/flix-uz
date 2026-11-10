@@ -36,6 +36,7 @@ async def cmd_start(message: Message, command: CommandObject):
     # Referal yoki Media kodi mavjudligini tekshirish
     args = command.args
     referrer_id = None
+    media_code_to_show = None
     if args:
         clean_args = args.strip()
         if clean_args.startswith("ref_"):
@@ -44,13 +45,9 @@ async def cmd_start(message: Message, command: CommandObject):
             except ValueError:
                 pass
         else:
-            # Agar start bilan birga media kodi yuborilgan bo'lsa (masalan: t.me/bot?start=105)
-            media = await db.get_media_by_code(clean_args)
-            if media:
-                await render_media_card(message, media, user_id)
-                return
+            media_code_to_show = clean_args
 
-    # Foydalanuvchini referali bilan qayd qilish
+    # Foydalanuvchini har doim (deep-link yoki to'g'ridan-to'g'ri tashrif bo'lsa ham) bazada qayd qilish
     await db.add_or_update_user(
         user_id=user_id,
         username=message.from_user.username,
@@ -58,6 +55,13 @@ async def cmd_start(message: Message, command: CommandObject):
         last_name=message.from_user.last_name,
         referrer_id=referrer_id
     )
+
+    # Agar start bilan birga media kodi yuborilgan bo'lsa (masalan: t.me/bot?start=105)
+    if media_code_to_show:
+        media = await db.get_media_by_code(media_code_to_show)
+        if media:
+            await render_media_card(message, media, user_id)
+            return
 
     # Oddiy /start
     import html

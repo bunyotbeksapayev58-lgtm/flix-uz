@@ -304,5 +304,79 @@ class EnterpriseBotTests(unittest.IsolatedAsyncioTestCase):
 
         await db.delete_media(code)
 
+    async def test_14_user_auto_registration_on_premium_grant(self):
+        """Oldin /start bosmagan begona userga Premium berilganda avtomatik ro'yxatga olinishi (0 rowcount xatosini oldini olish)"""
+        ghost_user_id = 777888999
+        # Foydalanuvchi bazada yo'qligini tekshiramiz
+        u = await db.get_user(ghost_user_id)
+        self.assertIsNone(u)
+
+        # Premium beramiz
+        ok = await db.set_user_premium(ghost_user_id, days=30)
+        self.assertTrue(ok)
+
+        # Endi foydalanuvchi bazada bor va premium faol
+        is_prem = await db.is_user_premium(ghost_user_id)
+        self.assertTrue(is_prem)
+
+    async def test_15_payment_idempotency_and_duplicate_prevention(self):
+        """Takroriy to'lov kelganda transaction_id orqali idempotentlikni ta'minlash"""
+        tx_id = "test_stars_tx_unique_101"
+        self.assertFalse(await db.is_transaction_processed(tx_id))
+
+        ok1 = await db.record_payment(
+            user_id=111111,
+            amount="75",
+            currency="XTR",
+            provider="Telegram Stars",
+            status="completed",
+            transaction_id=tx_id
+        )
+        self.assertTrue(ok1)
+        self.assertTrue(await db.is_transaction_processed(tx_id))
+
+        # Ikkinchi marta o'sha transaction_id bilan kelsa rad etiladi
+        ok2 = await db.record_payment(
+            user_id=111111,
+            amount="75",
+            currency="XTR",
+            provider="Telegram Stars",
+            status="completed",
+            transaction_id=tx_id
+        )
+        self.assertFalse(ok2)
+
+    async def test_16_premium_pricing_and_payment_admin_settings(self):
+        """Premium narxlari, karta va to'lov adminini sozlash"""
+        await db.set_setting("premium_price_1m_uzs", "20 000")
+        await db.set_setting("premium_price_1m_stars", "99")
+        await db.set_setting("payment_admin_username", "super_seller")
+        await db.set_setting("payment_card_number", "8600 9999 8888 7777")
+        await db.set_setting("payment_card_holder", "Bunyodbek Sapayev")
+
+        self.assertEqual(await db.get_setting("premium_price_1m_uzs"), "20 000")
+        self.assertEqual(await db.get_setting("premium_price_1m_stars"), "99")
+        self.assertEqual(await db.get_setting("payment_admin_username"), "super_seller")
+        self.assertEqual(await db.get_setting("payment_card_number"), "8600 9999 8888 7777")
+        self.assertEqual(await db.get_setting("payment_card_holder"), "Bunyodbek Sapayev")
+
+    async def test_17_search_escaping_special_characters(self):
+        """Qidiruvda % va _ belgilarini xavfsiz escape qilish va count_search_media"""
+        code = "CODE_PERCENT_TEST"
+        await db.add_media(
+            code=code,
+            category="kino",
+            title="100% Qashqirlar_Makoni Film",
+            file_id="TEST_FID_PERCENT"
+        )
+
+        res = await db.search_media("100%")
+        self.assertTrue(any(m["code"] == code for m in res))
+
+        total = await db.count_search_media("100%")
+        self.assertGreaterEqual(total, 1)
+
+        await db.delete_media(code)
+
 if __name__ == "__main__":
     unittest.main()

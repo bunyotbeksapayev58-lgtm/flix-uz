@@ -1,6 +1,7 @@
 import asyncio
 import sqlite3
 import logging
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from aiogram import Bot
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 BACKUP_DIR = BASE_DIR / "backups"
 
 def _sqlite_atomic_backup(src_path: str, dst_path: Path):
-    with sqlite3.connect(src_path) as src, sqlite3.connect(str(dst_path)) as dst:
+    with closing(sqlite3.connect(src_path)) as src, closing(sqlite3.connect(str(dst_path))) as dst:
         src.backup(dst)
 
 async def check_expiring_subscriptions(bot: Bot):
