@@ -475,5 +475,48 @@ class EnterpriseBotTests(unittest.IsolatedAsyncioTestCase):
         for ch in channels:
             await db.remove_required_channel(ch["channel_id"])
 
+    async def test_22_cancel_logic_and_database_backup_restore(self):
+        """Bekor qilish tekshiruvlari va zaxiralash/tiklash mexanizmi testi"""
+        from handlers.start import is_cancel_message
+        from workers.backup_manager import (
+            verify_sqlite_database,
+            perform_database_backup_file,
+            restore_database_from_file_path,
+            BACKUP_DIR
+        )
+        from pathlib import Path
+
+        # 1. Bekor qilish so'zlari tekshiruvi
+        self.assertTrue(is_cancel_message("❌ Bekor qilish"))
+        self.assertTrue(is_cancel_message("Bekor qilish"))
+        self.assertTrue(is_cancel_message("bekor"))
+        self.assertTrue(is_cancel_message("/cancel"))
+        self.assertTrue(is_cancel_message("  BEKOR QILISH  "))
+        self.assertFalse(is_cancel_message("Avatar 2"))
+        self.assertFalse(is_cancel_message("12345"))
+
+        # 2. Baza zaxirasini yaratish testi
+        backup_file = await perform_database_backup_file()
+        self.assertIsNotNone(backup_file)
+        self.assertTrue(backup_file.exists())
+        self.assertGreater(backup_file.stat().st_size, 0)
+
+        # 3. Yaratilgan zaxirani tekshirish
+        is_valid, msg, media_cnt, user_cnt = verify_sqlite_database(backup_file)
+        self.assertTrue(is_valid, f"Zaxira yaroqsiz: {msg}")
+        self.assertGreaterEqual(media_cnt, 0)
+
+        # 4. Tiklash mexanizmi testi
+        ok, res_str = await restore_database_from_file_path(backup_file)
+        self.assertTrue(ok)
+        self.assertIn("muvaffaqiyatli", res_str.lower())
+
+        # Tozalash
+        if backup_file.exists():
+            try:
+                backup_file.unlink()
+            except Exception:
+                pass
+
 if __name__ == "__main__":
     unittest.main()

@@ -299,3 +299,109 @@ async def process_grant_days(message: Message, state: FSMContext):
             pass
     else:
         await message.answer("❌ Xatolik yuz berdi. Foydalanuvchi bazada mavjudligini tekshiring.", reply_markup=get_main_keyboard(True))
+
+# ==================== BAZA ZAXIRASI VA TIKLASH (/backup, /restore) ====================
+
+@router.message(Command("backup"))
+@router.callback_query(F.data == "admin:backup")
+async def cmd_admin_backup(event: Message | CallbackQuery):
+    """Ma'lumotlar bazasining to'liq zaxira nusxasini yaratish va adminga yuborish"""
+    user_id = event.from_user.id
+    if not await admin_check(user_id):
+        return
+
+    from workers.backup_manager import perform_database_backup_file, send_backup_to_telegram, verify_sqlite_database
+    from aiogram.types import FSInputFile
+
+    if isinstance(event, CallbackQuery):
+        await event.answer("⏳ Zaxira yaratilmoqda...")
+        msg_obj = event.message
+    else:
+        msg_obj = event
+
+    status_msg = await msg_obj.answer("⏳ <i>Ma'lumotlar bazasi zaxiralanmoqda...</i>", parse_mode="HTML")
+    backup_file = await perform_database_backup_file()
+
+    if not backup_file or not backup_file.exists():
+        await status_msg.edit_text("❌ Zaxira nusxasi yaratishda xatolik yuz berdi.")
+        return
+
+    is_valid, info_msg, media_cnt, user_cnt = verify_sqlite_database(backup_file)
+    size_kb = round(backup_file.stat().st_size / 1024, 1)
+
+    caption = (
+        f"💾 <b>FlixUz Baza Zaxirasi (#CINEMA_DB_BACKUP)</b>\n\n"
+        f"📊 <b>Kinolar/Seriallar soni:</b> {media_cnt} ta\n"
+        f"👥 <b>Foydalanuvchilar:</b> {user_cnt} ta\n"
+        f"📁 <b>Fayl hajmi:</b> {size_kb} KB\n\n"
+        f"💡 <i>Ushbu faylni saqlab qo'ying. Kelgusida server yangilansa yoki qayta ishga tushsa, "
+        f"ushbu faylni botga yuborib bir soniyada barcha kinolarni tiklashingiz mumkin.</i>"
+    )
+
+    doc = FSInputFile(str(backup_file), filename=backup_file.name)
+    await msg_obj.answer_document(doc, caption=caption, parse_mode="HTML")
+    try:
+        await status_msg.delete()
+    except Exception:
+        pass
+
+@router.message(Command("restore"))
+@router.callback_query(F.data == "admin:restore_info")
+async def cmd_restore_info(event: Message | CallbackQuery):
+    """Baza tiklash bo'yicha yo'riqnoma"""
+    user_id = event.from_user.id
+    if not await admin_check(user_id):
+        return
+
+    text = (
+        "📥 <b>Ma'lumotlar bazasini tiklash (Restore) bo‘limi:</b>\n\n"
+        "Agar server yangilanib yoki qayta o'chib-yonib kinolar yo'qolgan bo'lsa:\n\n"
+        "1️⃣ Avval olingan <code>.db</code> zaxira faylini ushbu botga oddiy hujjat (fayl) sifatida yuboring.\n"
+        "2️⃣ Bot fayl butunligini tekshiradi va barcha kinolar hamda foydalanuvchilarni 1 soniyada to'liq tiklaydi!\n\n"
+        "💡 <i>Shuningdek, zaxira kanalini ulagan bo'lsangiz (<code>BACKUP_CHANNEL_ID</code>), "
+        "bot server yoqilishi bilanoq oxirgi zaxirani o'zi avtomatik yuklab oladi!</i>"
+    )
+
+    if isinstance(event, CallbackQuery):
+        await event.message.answer(text, parse_mode="HTML")
+        await event.answer()
+    else:
+        await event.answer(text, parse_mode="HTML")
+
+@router.message(F.document & F.document.file_name.endswith(".db"))
+async def process_restore_db_document(message: Message):
+    """Admin tomonidan yuborilgan .db fayli orqali bazani tiklash"""
+    user_id = message.from_user.id
+    if not await admin_check(user_id):
+        return
+
+    from workers.backup_manager import restore_database_from_file_path, BACKUP_DIR
+    from config import DB_PATH
+    import tempfile
+
+    doc = message.document
+    status_msg = await message.answer("⏳ <i>Fayl yuklab olinmoqda va tekshirilmoqda...</i>", parse_mode="HTML")
+
+    temp_path = BACKUP_DIR / f"temp_upload_{doc.file_unique_id}.db"
+    try:
+        await message.bot.download(doc.file_id, destination=temp_path)
+        ok, res_text = await restore_database_from_file_path(temp_path)
+        if ok:
+            # Ma'lumotlar bazasi ulanishini qayta yangilash
+            await db.init_db()
+            await status_msg.edit_text(
+                f"🎉 <b>{res_text}</b>\n\nBarcha kinolar, seriallar va foydalanuvchilar muvaffaqiyatli tiklandi!",
+                parse_mode="HTML"
+            )
+            await message.answer("Asosiy menyu:", reply_markup=get_main_keyboard(True))
+        else:
+            await status_msg.edit_text(f"❌ <b>Baza tiklanmadi:</b>\n{res_text}", parse_mode="HTML")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Xatolik yuz berdi: {e}", parse_mode="HTML")
+    finally:
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
+

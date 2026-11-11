@@ -196,6 +196,10 @@ def get_admin_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="✅ Blokdan chiqarish", callback_data="admin:unblockuser"),
         ],
         [
+            InlineKeyboardButton(text="💾 Bazani zaxiralash", callback_data="admin:backup"),
+            InlineKeyboardButton(text="📥 Bazani tiklash", callback_data="admin:restore_info"),
+        ],
+        [
             InlineKeyboardButton(text="❌ Adminni o‘chirish", callback_data="admin:removeadmin"),
         ],
     ])

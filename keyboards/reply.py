@@ -29,9 +29,9 @@ def get_main_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
     )
 
 def get_cancel_keyboard() -> ReplyKeyboardMarkup:
-    """Bekor qilish tugmasi"""
+    """Bekor qilish tugmasi - doimiy ochiq turadi va bitta bosishda yo'qolib ketmaydi"""
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="❌ Bekor qilish")]],
         resize_keyboard=True,
-        one_time_keyboard=True
+        persistent=True
     )

@@ -42,6 +42,15 @@ def get_user_lock(user_id: int) -> asyncio.Lock:
         _batch_locks[user_id] = asyncio.Lock()
     return _batch_locks[user_id]
 
+def cancel_batch_session(user_id: int):
+    """Foydalanuvchining ommaviy yuklash sessiyasini xavfsiz to'xtatish va xotirani tozalash"""
+    session = _batch_sessions.pop(user_id, None)
+    if session and session.get("timer_task") and not session["timer_task"].done():
+        try:
+            session["timer_task"].cancel()
+        except Exception:
+            pass
+
 def extract_episode_num(caption: Optional[str] = None, file_name: Optional[str] = None) -> Optional[int]:
     texts_to_check = []
     if caption:
@@ -377,6 +386,13 @@ async def process_media_file(message: Message, state: FSMContext):
 
         inline_post_kb = InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
 
+        # Yangi media qo'shilgach, avtomatik ravishda bulutga (Telegramga) zaxiralash
+        try:
+            from workers.backup_manager import auto_backup_trigger
+            asyncio.create_task(auto_backup_trigger(message.bot, reason=f"yangi_media:{data['code']}"))
+        except Exception:
+            pass
+
         await message.answer(msg, parse_mode="HTML", reply_markup=inline_post_kb or get_main_keyboard(True))
         if inline_post_kb:
             await message.answer("Bosh menyu:", reply_markup=get_main_keyboard(True))
@@ -672,6 +688,14 @@ async def finish_batch_upload(event: Message | CallbackQuery, state: FSMContext)
         summary += "🆓 <b>Barcha qismlar:</b> Bepul\n"
 
     summary += "\nEndi foydalanuvchilar ushbu qismlarni tomosha qilishlari mumkin! 🍿"
+
+    # Ommaviy yuklash yakunlangach, avtomatik zaxiralash
+    try:
+        from workers.backup_manager import auto_backup_trigger
+        bot_instance = event.bot
+        asyncio.create_task(auto_backup_trigger(bot_instance, reason=f"ommaviy_yuklash:{media_code}"))
+    except Exception:
+        pass
 
     if isinstance(event, Message):
         await event.answer(summary, parse_mode="HTML", reply_markup=get_main_keyboard(True))

@@ -68,21 +68,15 @@ async def check_expiring_subscriptions(bot: Bot):
     except Exception as e:
         logger.error(f"Subscription checker error: {e}")
 
-async def perform_database_backup():
-    """Ma'lumotlar bazasini xavfsiz va atomik zaxiralash (SQLite Online Backup API)"""
+async def perform_database_backup(bot: Bot = None):
+    """Ma'lumotlar bazasini xavfsiz va atomik zaxiralash (Lokal + Telegram buluti)"""
     try:
-        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        backup_file = BACKUP_DIR / f"cinema_backup_{timestamp}.db"
-
-        await asyncio.to_thread(_sqlite_atomic_backup, db.db_path, backup_file)
-        logger.info(f"💾 Avtomatik atomik baza zaxirasi yaratildi: {backup_file.name}")
-
-        # Eski zaxiralarni tozalash (faqat oxirgi 10 tasini saqlash)
-        all_backups = sorted(BACKUP_DIR.glob("cinema_backup_*.db"), key=lambda f: f.stat().st_mtime)
-        if len(all_backups) > 10:
-            for old_f in all_backups[:-10]:
-                old_f.unlink()
+        from workers.backup_manager import perform_database_backup_file, send_backup_to_telegram
+        backup_file = await perform_database_backup_file()
+        if backup_file:
+            logger.info(f"💾 Avtomatik atomik baza zaxirasi yaratildi: {backup_file.name}")
+            if bot:
+                await send_backup_to_telegram(bot, backup_file, reason="rejalashtirilgan (6 soatlik)")
     except Exception as e:
         logger.error(f"Database backup error: {e}")
 
@@ -92,7 +86,7 @@ async def start_background_workers(bot: Bot):
     while True:
         try:
             await check_expiring_subscriptions(bot)
-            await perform_database_backup()
+            await perform_database_backup(bot)
         except Exception as e:
             logger.error(f"Scheduler worker exception: {e}")
         # Har 6 soatda bir marta tekshiradi

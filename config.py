@@ -28,7 +28,25 @@ PREMIUM_PRICES = {
     "1_year": os.getenv("PREMIUM_PRICE_1YEAR", "120 000 so'm"),
 }
 
-DB_PATH = BASE_DIR / "database" / "cinema.db"
+# Ma'lumotlar bazasi yo'li (Persistent Disk va muhit o'zgaruvchilari qo'llab-quvvatlanadi)
+raw_db_path = os.getenv("DATABASE_PATH", os.getenv("DB_PATH", "")).strip()
+if raw_db_path:
+    DB_PATH = Path(raw_db_path)
+else:
+    DB_PATH = BASE_DIR / "database" / "cinema.db"
+
+# Papkasi mavjud bo'lmasa, avtomatik yaratish
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+# Avtomatik bulutli zaxiralash (Telegram Backup Channel yoki Super Admin)
+BACKUP_CHANNEL_RAW = os.getenv("BACKUP_CHANNEL_ID", "").strip()
+BACKUP_CHANNEL_ID: int | None = None
+if BACKUP_CHANNEL_RAW:
+    clean_bc = BACKUP_CHANNEL_RAW.replace(" ", "")
+    if clean_bc.lstrip("-").isdigit():
+        BACKUP_CHANNEL_ID = int(clean_bc)
+
+AUTO_BACKUP_ENABLED: bool = os.getenv("AUTO_BACKUP_ENABLED", "true").lower() in ("true", "1", "yes")
 
 # Mini App (WebApp) Sozlamalari
 WEBAPP_HOST: str = os.getenv("WEBAPP_HOST", "0.0.0.0")

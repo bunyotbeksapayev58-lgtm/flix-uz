@@ -66,6 +66,8 @@ async def set_default_commands(bot: Bot):
         BotCommand(command="requests", description="Kino buyurtmalari (Admin)"),
         BotCommand(command="setpostchannel", description="Kanalga post sozlash (Admin)"),
         BotCommand(command="premium_settings", description="Premium narxlari va to'lov admini (Admin)"),
+        BotCommand(command="backup", description="Bazani zaxiralash (Admin)"),
+        BotCommand(command="restore", description="Bazani tiklash (Admin)"),
     ]
     await bot.set_my_commands(commands, scope=BotCommandScopeDefault())
 
@@ -79,14 +81,22 @@ async def main():
         print("=======================================================\n")
         return
 
-    # Ma'lumotlar bazasini ishga tushirish
-    await db.init_db()
-    logger.info("✅ Ma'lumotlar bazasi tayyorlandi.")
-
     bot = Bot(
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
+
+    # Avtomatik tiklash: Agar server yangi containerda ishga tushib, baza bo'sh bo'lsa,
+    # zaxira kanalidan oxirgi zaxirani avtomatik yuklab oladi
+    from workers.backup_manager import auto_restore_on_startup
+    try:
+        await auto_restore_on_startup(bot)
+    except Exception as e:
+        logger.warning(f"Avtomatik zaxiradan tiklashda ogohlantirish: {e}")
+
+    # Ma'lumotlar bazasini ishga tushirish
+    await db.init_db()
+    logger.info("✅ Ma'lumotlar bazasi tayyorlandi.")
     dp = Dispatcher()
 
     # Middleware-larni ulash
