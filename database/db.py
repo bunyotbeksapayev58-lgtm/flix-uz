@@ -1436,4 +1436,36 @@ class Database:
                 # Tranzaksiya allaqachon mavjud
                 return False
 
+    async def create_payment_request(
+        self,
+        user_id: int,
+        amount: str,
+        currency: str = "UZS",
+        provider: str = "Click/Payme",
+        plan_days: int = 30
+    ) -> int:
+        import uuid
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        tx_id = f"VIP_{user_id}_{now_ts}_{uuid.uuid4().hex[:6]}"
+        async with self._connect() as db:
+            cur = await db.execute("""
+                INSERT INTO payments (user_id, amount, currency, provider, status, transaction_id)
+                VALUES (?, ?, ?, ?, 'pending', ?)
+            """, (user_id, str(amount), currency, provider, tx_id))
+            await db.commit()
+            return cur.lastrowid
+
+    async def get_payment(self, payment_id: int):
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM payments WHERE id = ?", (payment_id,)) as cur:
+                row = await cur.fetchone()
+                return dict(row) if row else None
+
+    async def update_payment_status(self, payment_id: int, status: str) -> bool:
+        async with self._connect() as db:
+            cur = await db.execute("UPDATE payments SET status = ? WHERE id = ?", (status, payment_id))
+            await db.commit()
+            return cur.rowcount > 0
+
 db = Database()

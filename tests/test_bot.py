@@ -518,5 +518,62 @@ class EnterpriseBotTests(unittest.IsolatedAsyncioTestCase):
             except Exception:
                 pass
 
+    async def test_23_vip_payment_request_and_24h_expiration(self):
+        """VIP to'lov so'rovi yaratish, 24 soatlik muddat va tasdiqlash/rad etish testi"""
+        from datetime import datetime, timezone
+
+        test_user_id = 99887766
+        await db.add_or_update_user(user_id=test_user_id, username="vip_applicant", first_name="VIP Applicant")
+
+        # 1. To'lov so'rovi yaratish
+        payment_id = await db.create_payment_request(
+            user_id=test_user_id,
+            amount="120 000",
+            currency="UZS",
+            provider="Click/Payme",
+            plan_days=365
+        )
+        self.assertIsInstance(payment_id, int)
+        self.assertGreater(payment_id, 0)
+
+        # 2. To'lov ma'lumotlarini olish va tekshirish
+        p_data = await db.get_payment(payment_id)
+        self.assertIsNotNone(p_data)
+        self.assertEqual(p_data["user_id"], test_user_id)
+        self.assertEqual(p_data["amount"], "120 000")
+        self.assertEqual(p_data["status"], "pending")
+
+        # 3. 24 soatlik muddat hisob-kitobini tekshirish
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        valid_ts = now_ts - (23 * 3600)  # 23 soat oldin
+        expired_ts = now_ts - (25 * 3600) # 25 soat oldin
+
+        self.assertLessEqual(now_ts - valid_ts, 86400, "23 soatlik so'rov yaroqli bo'lishi kerak")
+        self.assertGreater(now_ts - expired_ts, 86400, "25 soatlik so'rov 24 soatdan oshgani uchun eskirgan bo'lishi kerak")
+
+        # 4. Rad etish (Statusni yangilash)
+        ok_reject = await db.update_payment_status(payment_id, "rejected")
+        self.assertTrue(ok_reject)
+        p_rejected = await db.get_payment(payment_id)
+        self.assertEqual(p_rejected["status"], "rejected")
+
+        # 5. Yangi to'lov yaratish va Tasdiqlash
+        new_pay_id = await db.create_payment_request(
+            user_id=test_user_id,
+            amount="120 000",
+            currency="UZS",
+            provider="Click/Payme",
+            plan_days=365
+        )
+        ok_approve = await db.update_payment_status(new_pay_id, "completed")
+        self.assertTrue(ok_approve)
+
+        # VIP faollashtirish
+        await db.set_user_premium(test_user_id, days=365, tier="vip")
+        user_info = await db.get_user(test_user_id)
+        self.assertEqual(user_info["is_premium"], 1)
+        self.assertEqual(user_info["subscription_tier"], "vip")
+        self.assertTrue(await db.is_user_premium(test_user_id))
+
 if __name__ == "__main__":
     unittest.main()

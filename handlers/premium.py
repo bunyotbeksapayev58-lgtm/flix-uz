@@ -1,6 +1,6 @@
 import html
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from aiogram import Router, F
 from aiogram.types import (
     Message,
@@ -15,7 +15,7 @@ from aiogram.fsm.context import FSMContext
 
 from database import db
 from keyboards import get_premium_plans_keyboard, get_cancel_keyboard, get_main_keyboard
-from utils.states import PremiumSettingsState
+from utils.states import PremiumSettingsState, UserPaymentState
 
 router = Router()
 
@@ -39,8 +39,10 @@ async def _get_pricing_settings():
 # ==================== FOYDALANUVCHI UCHUN PREMIUM MENYUSI ====================
 
 @router.message(Command("premium"))
+@router.message(Command("vip"))
 @router.message(F.text == "⭐ Premium")
-@router.callback_query(F.data == "action:get_premium")
+@router.message(F.text.in_(["⭐ Premium", "💎 VIP", "VIP", "vip", "VIP olish", "vip olish", "Vip olish", "Premium", "premium", "💎 VIP olish"]))
+@router.callback_query(F.data.in_(["action:get_premium", "action:get_vip"]))
 async def show_premium_info(event: Message | CallbackQuery):
     """Premium obuna ma'lumotlari va narxlari"""
     user_id = event.from_user.id
@@ -52,8 +54,8 @@ async def show_premium_info(event: Message | CallbackQuery):
     exp_str = f"\n⏳ <i>Tugash muddati:</i> {user_data.get('premium_until', 'Cheksiz')}" if user_is_prem else ""
 
     text = (
-        "💎 <b>FlixUz Cinema Premium Obunasi</b>\n\n"
-        "Premium foydalanuvchilar quyidagi barcha imkoniyatlarga ega bo‘ladilar:\n"
+        "💎 <b>FlixUz Cinema Premium / VIP Obunasi</b>\n\n"
+        "VIP foydalanuvchilar quyidagi barcha imkoniyatlarga ega bo‘ladilar:\n"
         "✨ <b>Barcha eksklyuziv</b> filmlar, seriallar, anime va dramalarni to‘liq ko‘rish\n"
         "⚡️ <b>Maksimal tezlikda</b> videolarni yuklab olish\n"
         "🚫 <b>Reklamasiz</b> va majburiy homiy kanallarsiz foydalanish\n"
@@ -82,8 +84,10 @@ async def show_premium_info(event: Message | CallbackQuery):
         await event.answer()
 
 @router.callback_query(F.data.startswith("plan_choice:"))
-async def cb_plan_choice(call: CallbackQuery):
+async def cb_plan_choice(call: CallbackQuery, state: FSMContext = None):
     """Tanlangan tarif bo'yicha to'lov usulini tanlash (Telegram Stars yoki Click/Payme)"""
+    if state:
+        await state.clear()
     plan = call.data.split(":")[1]
     prices = await _get_pricing_settings()
 
@@ -136,8 +140,8 @@ async def cb_plan_choice(call: CallbackQuery):
 # ==================== CLICK / PAYME TO'LOVI VA ADMINGA YO'NALTIRISH ====================
 
 @router.callback_query(F.data.startswith("buy_click_payme:"))
-async def cb_buy_click_payme(call: CallbackQuery):
-    """Click / Payme tanlanganda to'lov rekvizitlarini chiqarish va adminga o'tkazish"""
+async def cb_buy_click_payme(call: CallbackQuery, state: FSMContext):
+    """Click / Payme tanlanganda to'lov rekvizitlarini chiqarish, to'lov so'rovini bazaga saqlash va adminga tasdiqlash/rad etish so'rovini jo'natish (24 soatlik muddat bilan)"""
     plan = call.data.split(":")[1]
     prices = await _get_pricing_settings()
     user_id = call.from_user.id
@@ -156,67 +160,346 @@ async def cb_buy_click_payme(call: CallbackQuery):
     card_number = prices["card_num"]
     card_holder = prices["card_holder"]
 
-    prefilled_text = urllib.parse.quote(f"Salom, men {plan_title} uchun to'lov qildim. Mening Telegram ID: {user_id}")
+    # 1. Bazada to'lov so'rovini yaratish
+    payment_id = await db.create_payment_request(
+        user_id=user_id,
+        amount=plan_uzs,
+        currency="UZS",
+        provider="Click/Payme",
+        plan_days=plan_days
+    )
+    now_dt = datetime.now(timezone.utc)
+    now_ts = int(now_dt.timestamp())
+    expire_dt = now_dt + timedelta(hours=24)
+    expire_str = expire_dt.strftime("%d.%m.%Y %H:%M")
+
+    # 2. Foydalanuvchi FSM holatini chek qabul qilishga sozlash
+    await state.set_state(UserPaymentState.waiting_for_receipt)
+    await state.update_data(
+        payment_id=payment_id,
+        plan=plan,
+        plan_title=plan_title,
+        plan_uzs=plan_uzs,
+        plan_days=plan_days,
+        created_ts=now_ts
+    )
+
+    prefilled_text = urllib.parse.quote(
+        f"Salom, men #{payment_id} raqamli to'lov so'rovi bo'yicha {plan_title} ({plan_uzs} so'm) uchun to'lov qildim. Mening Telegram ID: {user_id}"
+    )
     admin_direct_link = f"https://t.me/{admin_un}?text={prefilled_text}"
 
     text = (
-        "💳 <b>Click / Payme orqali to‘lov:</b>\n\n"
+        "💳 <b>Click / Payme orqali VIP to‘lov:</b>\n\n"
         f"📦 <b>Tanlangan tarif:</b> {plan_title}\n"
-        f"💰 <b>To‘lov summasi:</b> <b>{plan_uzs} so'm</b>\n\n"
+        f"💰 <b>To‘lov summasi:</b> <b>{plan_uzs} so'm</b>\n"
+        f"⏳ <b>So‘rov muddati:</b> 24 soat (tugash vaqti: {expire_str} UTC)\n"
+        f"🆔 <b>To‘lov so‘rovi ID:</b> <code>#{payment_id}</code>\n\n"
         f"💳 <b>Karta raqami:</b> <code>{card_number}</code>\n"
         f"👤 <b>Karta egasi:</b> <b>{card_holder}</b>\n\n"
-        "📌 <b>Qanday to‘lanadi?</b>\n"
-        f"1. Click, Payme yoki bank ilovasi orqali yuqoridagi kartaga <b>{plan_uzs} so'm</b> o‘tkazing.\n"
+        "📌 <b>To‘lov qilish tartibi:</b>\n"
+        f"1. Click, Payme yoki bank ilovangiz orqali kartaga <b>{plan_uzs} so'm</b> o‘tkazing.\n"
         "2. To‘lov chekini (skrinshotini) saqlab oling.\n"
-        "3. Quyidagi <b>«💬 Adminga yozish va Chek yuborish»</b> tugmasini bosing va chekni yuboring.\n"
-        "4. Admin chekni tekshirib, darhol hisobingizga Premium obunani faollashtirib beradi!\n\n"
+        "3. Chekni to‘g‘ridan-to‘g‘ri shu botga rasm qilib yuboring yoki adminga shaxsiy xabarda tashlang.\n"
+        "4. Admin to‘lovni tekshirib (24 soat ichida) VIP obunangizni tasdiqlaydi!\n\n"
         f"🆔 Sizning Telegram ID: <code>{user_id}</code>"
     )
 
     buttons = [
+        [InlineKeyboardButton(text="📸 To‘lov chekini botga yuborish", callback_data=f"btn_send_receipt_info:{payment_id}")],
         [InlineKeyboardButton(text="💬 Adminga yozish va Chek yuborish", url=admin_direct_link)],
         [InlineKeyboardButton(text="🔙 Orqaga", callback_data=f"plan_choice:{plan}")]
     ]
     await call.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
     await call.answer()
 
-    # Mas'ul adminga to'lov so'rovi va 1-bosishda Premium berish tugmasini jo'natish
+    # 3. Mas'ul adminga to'lov so'rovi va 24 soatlik tasdiqlash/rad etish tugmalarini yuborish
     admin_notify_text = (
-        "🔔 <b>Yangi Click / Payme to‘lov so‘rovi!</b>\n\n"
+        "🔔 <b>Yangi VIP / Premium to‘lov so‘rovi!</b>\n\n"
         f"👤 <b>Foydalanuvchi:</b> {user_full_name} ({username_str})\n"
         f"🆔 <b>Telegram ID:</b> <code>{user_id}</code>\n"
-        f"📦 <b>Tanlangan tarif:</b> {plan_title} ({plan_uzs} so'm)\n\n"
-        "<i>Foydalanuvchi sizga chek (skrinshot) yuborishi kutilmoqda.\n"
-        "Chekni ko‘rgach, quyidagi tugma orqali darhol 1 bosishda Premium berishingiz mumkin:</i>"
+        f"📦 <b>Tanlangan tarif:</b> {plan_title} (<b>{plan_uzs} so'm</b>)\n"
+        f"📅 <b>VIP muddati:</b> {plan_days} kun\n"
+        f"🆔 <b>To‘lov ID:</b> <code>#{payment_id}</code>\n"
+        f"⏳ <b>Amal qilish muddati:</b> 24 soat ({expire_str} UTC gacha)\n\n"
+        "<i>Foydalanuvchi to'lov qilib chek yuborishi kutilmoqda. Pul kartangizga tushganini tekshirib, quyidagi tugmalar orqali tasdiqlang yoki rad eting:</i>"
     )
-    admin_grant_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"✅ {plan_days} kun Premium yoqish", callback_data=f"quick_grant:{user_id}:{plan_days}")]
+    admin_action_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=f"✅ Tasdiqlash ({plan_days} kun VIP)",
+                callback_data=f"vip_approve:{payment_id}:{user_id}:{plan_days}:{now_ts}"
+            ),
+            InlineKeyboardButton(
+                text="❌ Rad etish",
+                callback_data=f"vip_reject:{payment_id}:{user_id}:{now_ts}"
+            )
+        ]
     ])
 
-    # Agar belgilangan to'lov admini ID si bo'lsa unga yuboramiz
     target_admin_id = int(prices.get("admin_id") or 0)
     sent_to_admin = False
     if target_admin_id > 0:
         try:
-            await call.bot.send_message(target_admin_id, admin_notify_text, parse_mode="HTML", reply_markup=admin_grant_kb)
+            await call.bot.send_message(target_admin_id, admin_notify_text, parse_mode="HTML", reply_markup=admin_action_kb)
             sent_to_admin = True
         except Exception:
             pass
 
     if not sent_to_admin:
-        # Barcha adminlarga bildirishnoma jo'natish
         admins = await db.get_admin_ids()
         for aid in admins:
             try:
-                await call.bot.send_message(aid, admin_notify_text, parse_mode="HTML", reply_markup=admin_grant_kb)
+                await call.bot.send_message(aid, admin_notify_text, parse_mode="HTML", reply_markup=admin_action_kb)
             except Exception:
                 pass
 
-# ==================== ADMINDAN 1-BOSISHDA PREMIUM YOQISH ====================
+@router.callback_query(F.data.startswith("btn_send_receipt_info:"))
+async def cb_send_receipt_info(call: CallbackQuery):
+    """Foydalanuvchiga to'lov chekini qanday yuborish bo'yicha ko'rsatma"""
+    await call.answer(
+        "📸 Iltimos, to‘lov chekining skrinshotini (rasmini) to‘g‘ridan-to‘g‘ri shu botga rasm sifatida yuboring!\n"
+        "Bot uni darhol adminga tekshirish uchun yetkazadi.",
+        show_alert=True
+    )
+
+@router.message(UserPaymentState.waiting_for_receipt, F.photo | F.document)
+async def process_user_receipt(message: Message, state: FSMContext):
+    """Foydalanuvchi to'lov cheki skrinshotini botga yuborganda adminga yetkazish"""
+    data = await state.get_data()
+    payment_id = data.get("payment_id", 0)
+    plan_title = data.get("plan_title", "VIP Premium")
+    plan_uzs = data.get("plan_uzs", "15 000")
+    plan_days = data.get("plan_days", 30)
+    created_ts = data.get("created_ts", int(datetime.now(timezone.utc).timestamp()))
+
+    user_id = message.from_user.id
+    user_full_name = html.escape(message.from_user.full_name or "Foydalanuvchi")
+    username_str = f"@{message.from_user.username}" if message.from_user.username else f"ID: {user_id}"
+
+    # Foydalanuvchiga tasdiq xabari
+    await message.answer(
+        "✅ <b>To‘lov chekingiz qabul qilindi va adminga yuborildi!</b>\n\n"
+        f"📦 Tarif: <b>{plan_title}</b>\n"
+        f"🆔 So‘rov ID: <code>#{payment_id}</code>\n"
+        "⏳ Admin 24 soat ichida to‘lovni tekshirib, VIP obunangizni tasdiqlaydi. "
+        "Natija haqida sizga shu yerda bildirishnoma keladi.",
+        parse_mode="HTML"
+    )
+    await state.clear()
+
+    caption = (
+        "📸 <b>Yangi VIP to‘lov cheki keldi!</b>\n\n"
+        f"👤 <b>Foydalanuvchi:</b> {user_full_name} ({username_str})\n"
+        f"🆔 <b>Telegram ID:</b> <code>{user_id}</code>\n"
+        f"📦 <b>Tarif:</b> {plan_title} (<b>{plan_uzs} so'm</b>)\n"
+        f"📅 <b>VIP muddati:</b> {plan_days} kun\n"
+        f"🆔 <b>To‘lov ID:</b> <code>#{payment_id}</code>\n"
+        "⏳ <b>Amal qilish muddati:</b> 24 soat\n\n"
+        "<i>To'lov hisobingizga tushganini tekshirib, tasdiqlang yoki rad eting:</i>"
+    )
+    admin_action_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=f"✅ Tasdiqlash ({plan_days} kun VIP)",
+                callback_data=f"vip_approve:{payment_id}:{user_id}:{plan_days}:{created_ts}"
+            ),
+            InlineKeyboardButton(
+                text="❌ Rad etish",
+                callback_data=f"vip_reject:{payment_id}:{user_id}:{created_ts}"
+            )
+        ]
+    ])
+
+    prices = await _get_pricing_settings()
+    target_admin_id = int(prices.get("admin_id") or 0)
+    sent_to_admin = False
+
+    async def _send_receipt(target_chat_id: int):
+        if message.photo:
+            await message.bot.send_photo(
+                target_chat_id,
+                photo=message.photo[-1].file_id,
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=admin_action_kb
+            )
+        elif message.document:
+            await message.bot.send_document(
+                target_chat_id,
+                document=message.document.file_id,
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=admin_action_kb
+            )
+
+    if target_admin_id > 0:
+        try:
+            await _send_receipt(target_admin_id)
+            sent_to_admin = True
+        except Exception:
+            pass
+
+    if not sent_to_admin:
+        admins = await db.get_admin_ids()
+        for aid in admins:
+            try:
+                await _send_receipt(aid)
+            except Exception:
+                pass
+
+# ==================== ADMINDAN 24-SOATLIK VIP TASDIQLASH VA RAD ETISH ====================
+
+@router.callback_query(F.data.startswith("vip_approve:"))
+async def cb_vip_approve(call: CallbackQuery):
+    """Admin to'lovni tasdiqlaydi (24 soatlik tekshiruv bilan)"""
+    if not await admin_check(call.from_user.id):
+        await call.answer("⛔️ Faqat adminlar tasdiqlashi mumkin!", show_alert=True)
+        return
+
+    parts = call.data.split(":")
+    payment_id = int(parts[1])
+    target_user_id = int(parts[2])
+    plan_days = int(parts[3])
+    created_ts = int(parts[4])
+
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    # 24 soatlik muddat tekshiruvi (86400 soniya)
+    if now_ts - created_ts > 86400:
+        await db.update_payment_status(payment_id, "expired")
+        await call.answer("⚠️ Ushbu so‘rov muddati tugagan (24 soat o‘tgan)!", show_alert=True)
+        note = "\n\n⌛️ <b>MUDDATI O'TGAN! (24 soatlik muddat tugagan)</b>"
+        try:
+            if call.message.photo or call.message.document:
+                await call.message.edit_caption(caption=(call.message.caption or "") + note, parse_mode="HTML", reply_markup=None)
+            else:
+                await call.message.edit_text(text=(call.message.text or "") + note, parse_mode="HTML", reply_markup=None)
+        except Exception:
+            pass
+        return
+
+    payment = await db.get_payment(payment_id)
+    if payment and payment.get("status") in ("completed", "rejected", "expired"):
+        status_name = "allaqachon tasdiqlangan" if payment.get("status") == "completed" else "allaqachon yakunlangan"
+        await call.answer(f"Bu to‘lov so‘rovi {status_name}!", show_alert=True)
+        return
+
+    # 1. Foydalanuvchiga VIP berish
+    await db.set_user_premium(target_user_id, days=plan_days, tier="vip")
+    await db.update_payment_status(payment_id, "completed")
+
+    admin_name = html.escape(call.from_user.first_name or "Admin")
+    now_str = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M")
+
+    # 2. Foydalanuvchiga tabrik va tasdiq xabarini yuborish
+    try:
+        await call.bot.send_message(
+            target_user_id,
+            "🎉 <b>Tabriklaymiz, VIP to‘lovingiz muvaffaqiyatli tasdiqlandi!</b>\n\n"
+            f"💎 Sizga <b>{plan_days} kunlik VIP Premium obuna</b> faollashtirildi!\n"
+            "🍿 <i>Endi barcha eksklyuziv filmlar, seriallar, animelar va yangi qismlarni "
+            "hech qanday reklamasiz va cheklovlarsiz tomosha qilishingiz mumkin!</i>\n\n"
+            "FlixUz jamoasi maroqli hordiq tilaydi!",
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
+
+    # 3. Admin xabarini yangilash va tugmalarni olib tashlash
+    approval_text = f"\n\n✅ <b>TASDIQLANDI!</b>\n(Admin: {admin_name}, Vaqt: {now_str} UTC, {plan_days} kun VIP berildi)"
+    try:
+        if call.message.photo or call.message.document:
+            await call.message.edit_caption(
+                caption=(call.message.caption or "") + approval_text,
+                parse_mode="HTML",
+                reply_markup=None
+            )
+        else:
+            await call.message.edit_text(
+                text=(call.message.text or "") + approval_text,
+                parse_mode="HTML",
+                reply_markup=None
+            )
+    except Exception:
+        pass
+
+    await call.answer(f"✅ VIP muvaffaqiyatli tasdiqlandi ({plan_days} kun berildi)!", show_alert=True)
+
+@router.callback_query(F.data.startswith("vip_reject:"))
+async def cb_vip_reject(call: CallbackQuery):
+    """Admin to'lovni rad etadi (pul to'lanmagan bo'lsa)"""
+    if not await admin_check(call.from_user.id):
+        await call.answer("⛔️ Faqat adminlar rad etishi mumkin!", show_alert=True)
+        return
+
+    parts = call.data.split(":")
+    payment_id = int(parts[1])
+    target_user_id = int(parts[2])
+    created_ts = int(parts[3])
+
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    # 24 soatlik muddat tekshiruvi (86400 soniya)
+    if now_ts - created_ts > 86400:
+        await db.update_payment_status(payment_id, "expired")
+        await call.answer("⚠️ Ushbu so‘rov muddati tugagan (24 soat o‘tgan)!", show_alert=True)
+        note = "\n\n⌛️ <b>MUDDATI O'TGAN! (24 soatlik muddat tugagan)</b>"
+        try:
+            if call.message.photo or call.message.document:
+                await call.message.edit_caption(caption=(call.message.caption or "") + note, parse_mode="HTML", reply_markup=None)
+            else:
+                await call.message.edit_text(text=(call.message.text or "") + note, parse_mode="HTML", reply_markup=None)
+        except Exception:
+            pass
+        return
+
+    payment = await db.get_payment(payment_id)
+    if payment and payment.get("status") in ("completed", "rejected", "expired"):
+        status_name = "allaqachon tasdiqlangan" if payment.get("status") == "completed" else "allaqachon yakunlangan"
+        await call.answer(f"Bu to‘lov so‘rovi {status_name}!", show_alert=True)
+        return
+
+    await db.update_payment_status(payment_id, "rejected")
+
+    prices = await _get_pricing_settings()
+    admin_un = prices.get("admin_user", "admin")
+    admin_name = html.escape(call.from_user.first_name or "Admin")
+    now_str = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M")
+
+    # Foydalanuvchiga rad etilganlik xabari
+    try:
+        await call.bot.send_message(
+            target_user_id,
+            "❌ <b>Hurmatli foydalanuvchi, VIP to‘lov so‘rovingiz rad etildi!</b>\n\n"
+            "📌 <b>Sabab:</b> Bank hisobimizga to‘lov kelib tushmagan yoki to‘lov cheki noto‘g‘ri.\n"
+            f"Agar pul hisobingizdan yechilgan bo‘lsa, to‘lov chekini qaytadan adminga yuboring: @{admin_un}",
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
+
+    # Admin xabarini yangilash va tugmalarni olib tashlash
+    reject_text = f"\n\n❌ <b>RAD ETILDI!</b>\n(Admin: {admin_name}, Vaqt: {now_str} UTC, to'lov tasdiqlanmadi)"
+    try:
+        if call.message.photo or call.message.document:
+            await call.message.edit_caption(
+                caption=(call.message.caption or "") + reject_text,
+                parse_mode="HTML",
+                reply_markup=None
+            )
+        else:
+            await call.message.edit_text(
+                text=(call.message.text or "") + reject_text,
+                parse_mode="HTML",
+                reply_markup=None
+            )
+    except Exception:
+        pass
+
+    await call.answer("❌ To‘lov so‘rovi rad etildi va foydalanuvchiga bildirishnoma yuborildi.", show_alert=True)
 
 @router.callback_query(F.data.startswith("quick_grant:"))
 async def cb_quick_grant(call: CallbackQuery):
-    """Admin to'lov chekini tekshirib, bitta tugma bilan Premium faollashtiradi"""
+    """Admin to'lov chekini tekshirib, bitta tugma bilan Premium faollashtiradi (eski tugmalar uchun)"""
     if not await admin_check(call.from_user.id):
         await call.answer("⛔️ Ruxsat berilmagan!", show_alert=True)
         return
@@ -225,7 +508,7 @@ async def cb_quick_grant(call: CallbackQuery):
     target_user_id = int(parts[1])
     days = int(parts[2])
 
-    await db.set_user_premium(target_user_id, days=days)
+    await db.set_user_premium(target_user_id, days=days, tier="vip")
     await db.record_payment(
         user_id=target_user_id,
         amount=f"{days}_kun",
@@ -237,12 +520,11 @@ async def cb_quick_grant(call: CallbackQuery):
     admin_name = html.escape(call.from_user.first_name or "Admin")
     now_str = datetime.now(timezone.utc).strftime("%H:%M")
 
-    # Foydalanuvchiga xabar jo'natish
     try:
         await call.bot.send_message(
             target_user_id,
             "🎉 <b>Tabriklaymiz, to‘lovingiz muvaffaqiyatli tasdiqlandi!</b>\n\n"
-            f"💎 Sizga <b>{days} kunlik Premium obuna</b> faollashtirildi!\n"
+            f"💎 Sizga <b>{days} kunlik VIP Premium obuna</b> faollashtirildi!\n"
             "🍿 <i>Endi barcha eksklyuziv filmlar, seriallar va eng yangi qismlarni cheklovlarsiz tomosha qilishingiz mumkin!</i>\n\n"
             "FlixUz jamoasi maroqli hordiq tilaydi!",
             parse_mode="HTML"
@@ -250,12 +532,14 @@ async def cb_quick_grant(call: CallbackQuery):
     except Exception:
         pass
 
-    # Admin xabarini yangilash
-    await call.message.edit_text(
-        call.message.text + f"\n\n✅ <b>Tasdiqlandi!</b> ({admin_name} tomonidan {now_str} da {days} kun Premium yoqildi)",
-        parse_mode="HTML"
-    )
-    await call.answer(f"✅ Foydalanuvchiga {days} kunlik Premium muvaffaqiyatli yoqildi!", show_alert=True)
+    try:
+        await call.message.edit_text(
+            (call.message.text or "") + f"\n\n✅ <b>Tasdiqlandi!</b> ({admin_name} tomonidan {now_str} da {days} kun VIP yoqildi)",
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
+    await call.answer(f"✅ Foydalanuvchiga {days} kunlik VIP muvaffaqiyatli yoqildi!", show_alert=True)
 
 # ==================== TELEGRAM STARS TO'LOVI ====================
 

@@ -79,3 +79,7 @@ class PremiumSettingsState(StatesGroup):
     edit_payment_admin = State()
     edit_card_details = State()
 
+class UserPaymentState(StatesGroup):
+    waiting_for_receipt = State()
+
+
