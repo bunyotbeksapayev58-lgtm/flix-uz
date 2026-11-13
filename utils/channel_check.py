@@ -111,21 +111,16 @@ async def check_user_channels_subscription(bot: Bot, user_id: int) -> Tuple[bool
                 is_member = getattr(member, "is_member", True)
                 if not is_member:
                     unjoined_telegram.append(ch)
+            elif status in ["left", "kicked"]:
+                unjoined_telegram.append(ch)
             else:
-                # "left", "kicked", yoki a'zo emas
                 unjoined_telegram.append(ch)
 
         except Exception as e:
-            err_msg = str(e).lower()
+            # Bot kanalda admin bo'lmasa yoki Telegram API tekshirishda xatolik bersa:
+            # Botning o'z huquqi yo'qligi sababli a'zo bo'lgan haqiqiy foydalanuvchini bloklamaymiz!
             logger.warning(f"Kanalga a'zolikni tekshirishda xatolik ({raw_id} -> {normalized_id}): {e}")
-            # Agar bot kanalda admin bo'lmasa yoki kanal topilmasa:
-            # ("member list is inaccessible", "chat not found", "bot is not a member", "chat_admin_required")
-            # Bunday holatda bot o'z xatosi sababli oddiy foydalanuvchini bloklamasligi kerak!
-            if any(term in err_msg for term in ["inaccessible", "not found", "not a member", "admin"]):
-                logger.error(f"⚠️ Bot kanalda admin emas yoki kanal mavjud emas: {raw_id}. Foydalanuvchi bloklanmadi.")
-                pass
-            else:
-                unjoined_telegram.append(ch)
+            pass
 
     if unjoined_telegram:
         # Foydalanuvchiga barcha homiylarni (Telegram, Instagram, YouTube) ko'rsatamiz
@@ -138,28 +133,32 @@ def get_subscription_keyboard(channels: List[Dict[str, Any]]) -> InlineKeyboardM
     for idx, ch in enumerate(channels, 1):
         ch_type = ch.get("channel_type", "telegram").lower()
         name = ch.get("channel_name") or f"Homiy #{idx}"
-        link = ch.get("invite_link") or ""
+        link = (ch.get("invite_link") or "").strip()
 
         if ch_type == "instagram":
             btn_text = f"📸 {name} (Instagram)"
-            if not link:
-                raw = ch["channel_id"].lstrip("@")
-                link = f"https://www.instagram.com/{raw}/"
+            if not link or not link.startswith(("http://", "https://")):
+                raw = ch.get("channel_id", "").lstrip("@")
+                link = f"https://www.instagram.com/{raw}/" if raw else "https://www.instagram.com"
         elif ch_type == "youtube":
             btn_text = f"🔴 {name} (YouTube)"
-            if not link:
-                raw = ch["channel_id"]
-                link = raw if raw.startswith("http") else f"https://www.youtube.com/{raw}"
+            if not link or not link.startswith(("http://", "https://")):
+                raw = ch.get("channel_id", "")
+                link = raw if raw.startswith(("http://", "https://")) else (f"https://www.youtube.com/{raw}" if raw else "https://www.youtube.com")
         else:
             btn_text = f"📢 {name} ga a'zo bo'lish"
-            if not link:
-                raw_id = normalize_telegram_channel_id(ch["channel_id"])
+            if not link or not link.startswith(("http://", "https://", "tg://")):
+                raw_id = normalize_telegram_channel_id(ch.get("channel_id", ""))
                 if raw_id.startswith("@"):
                     link = f"https://t.me/{raw_id.lstrip('@')}"
-                else:
+                elif raw_id.startswith("+"):
                     link = f"https://t.me/{raw_id}"
+                else:
+                    link = f"https://t.me/{raw_id.lstrip('@')}" if raw_id else "https://t.me"
 
-        buttons.append([InlineKeyboardButton(text=btn_text, url=link)])
+        # Faqat to'g'ri URL ga ega tugmalarni qo'shish (Telegram bad request oldini olish)
+        if link and link.startswith(("http://", "https://", "tg://")):
+            buttons.append([InlineKeyboardButton(text=btn_text, url=link)])
 
     buttons.append([
         InlineKeyboardButton(text="✅ A'zo bo'ldim / Tekshirish", callback_data="check_sub_status")
